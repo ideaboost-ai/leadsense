@@ -22,7 +22,7 @@ async def sector_identification_agent(company_profile: dict) -> RecomendedSector
     print("Identifing sectors...")
     INSTRUCTIONS = """You are a business development expert helping a small AI company
                        identify the most promising business sectors to target for automation and AI integration.
-                       Given the company profile, recommend 2–3 sectors or niches the company should target. 
+                       Given the company profile, recommend 1 sectors or niches the company should target. 
                        For each recommendation, include a short justification for why this sector is a good 
                        fit based on the company's size, location, and services.
                     """
@@ -60,7 +60,7 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList) -> Lead
     print("Generate queries...")
     INSTRUCTIONS = """You are a lead generation assistant. Your job is to create intelligent web 
                       search queries that can help find small businesses in a specific sector.
-                      For each sector, generate 2–3 search queries in both English and German that 
+                      For each sector, generate 1 search queries in both English and German that 
                       can help discover potential leads (e.g., small companies, service providers)."""
 
     agent = Agent(
@@ -81,13 +81,12 @@ class SearchResultItem(BaseModel):
     Description: str
 
 class LeadDiscoveryResults(BaseModel):
-    results: dict[str, list[SearchResultItem]]
+    results: list[SearchResultItem]
 
     def get_concatenated_urls(self) -> str:
         urls: list[str] = []
-        for search_results in self.results.values():
-            for item in search_results:
-                urls.append(str(item.URL))  # Convert HttpUrl to string if needed
+        for item in self.results:
+            urls.append(str(item.URL))  # Convert HttpUrl to string if needed
         return ", ".join(urls)
 
 async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> LeadDiscoveryResults:
@@ -105,7 +104,7 @@ async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> Lead
 
                         Instructions:
                         1. Execute each search query using the web.
-                        2. For each query, return 3–5 high-relevance results.
+                        2. For each query, return 2 high-relevance results.
                         3. Results should prioritize:
                             - Small company websites
                             - Swiss or German businesses

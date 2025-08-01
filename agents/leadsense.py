@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from agents import Agent, Runner, trace, Tool, AgentOutputSchema
 from agents.mcp import MCPServerStdio
 from pydantic import BaseModel, Field, HttpUrl
+from pprint import pprint
 import asyncio
 import os
 
@@ -11,6 +12,7 @@ load_dotenv(override=True)
 class RecomendedSectorItem(BaseModel):
     name: str = Field(description="The sector name used for a web search")
     justification: str = Field(description="Your reasoning for why this sector is important")
+    order: int = Field(description="The order of the sector in the list")
 
 class RecomendedSectorList(BaseModel): 
     recomended_sectors: list [RecomendedSectorItem] = Field(description="A list of recomended sectors") 
@@ -22,9 +24,10 @@ async def sector_identification_agent(company_profile: dict) -> RecomendedSector
     print("Identifing sectors...")
     INSTRUCTIONS = """You are a business development expert helping a small AI company
                        identify the most promising business sectors to target for automation and AI integration.
-                       Given the company profile, recommend 1 sectors or niches the company should target. 
+                       Given the company profile, recommend 10 sectors or niches the company should target. 
                        For each recommendation, include a short justification for why this sector is a good 
-                       fit based on the company's size, location, and services.
+                       fit based on the company's size, location, and services. Please be creative and think
+                       outside the box.
                     """
     agent = Agent(
         name="SectorIdentificationAgent",
@@ -41,6 +44,7 @@ async def sector_identification_agent(company_profile: dict) -> RecomendedSector
 class WebSearchQuery(BaseModel):
     language: str  # "English" or "German"
     query: str
+    order: int
 
 class LeadDiscoveryItem(BaseModel):
     sector: str
@@ -60,8 +64,11 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company
     print("Generate queries...")
     INSTRUCTIONS = """You are a lead generation assistant. Your job is to create intelligent web 
                       search queries that can help find small businesses in a specific sector.
-                      For each sector, generate 1 search queries in both English and German that 
-                      can help discover potential leads (e.g., small companies, service providers)."""
+                      For each sector, generate 3 search queries in both English and German that 
+                      can help discover potential leads (e.g., small companies, service providers).  
+                      Order them by relevance to the company profile. Prioritize local leads, small companies
+                      and startups without dedicated IT departments.
+                    """
 
     agent = Agent(
         name="LeadDiscoveryAgent",
@@ -70,7 +77,12 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company
         output_type=LeadDiscoveryOutput,
     )
 
-    result = await Runner.run(agent, f"Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}. Company profile: {company_profile}. Make sure queries are created with the cosideration of company location to target local leads.")
+    result = await Runner.run(agent, f"""
+                        Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}.
+                        Company profile: {company_profile}. 
+                        Make sure queries are created with the cosideration of company location to 
+                        target local leads.
+                        Pick top 2 relevant sectors to generate queries for.""")
     return result.final_output
 # --- END LEAD DISCOVERY AGENT --- #
 
@@ -79,6 +91,7 @@ class SearchResultItem(BaseModel):
     Title: str
     URL: HttpUrl
     Description: str
+    Order: int
 
 class LeadDiscoveryResults(BaseModel):
     results: list[SearchResultItem]
@@ -89,12 +102,12 @@ class LeadDiscoveryResults(BaseModel):
             urls.append(str(item.URL))  # Convert HttpUrl to string if needed
         return ", ".join(urls)
 
-async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> LeadDiscoveryResults:
+async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput, company_profile: dict) -> LeadDiscoveryResults:
     print("Running searches...")
     env = {"BRAVE_API_KEY": os.getenv("BRAVE_API_KEY")}
     params = {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"], "env": env}
 
-    INSTRUCTIONS = """
+    INSTRUCTIONS = f"""
                     You are a web search agent. Execute the provided search queries and return results.
                     
                     Instructions:
@@ -103,6 +116,7 @@ async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> Lead
                     3. For each result, include: Title, URL, Description
                     4. Output as JSON array of results.
                     5. Focus on business websites and directories.
+                    6. Order results by relevance to the company profile: {company_profile}.
                     """ 
     REQUEST = f"""Here are search queries you need to execute: {lead_discovery_output.concatenate_queries()}"""
 
@@ -170,6 +184,7 @@ async def main():
     company_profile = {
         "company_name": "AutoAI Solutions",
         "location": "Zurich, Switzerland",
+        "description": "IdeaBoost offers tailored software solutions including custom dev, AI integration, web/mobile apps, cloud services (AWS), and UI/UX design to support business growth.",
         "team_size": 5,
         "core_services": ["process automation", "AI integration"],
         "languages": ["English", "German"]
@@ -177,13 +192,13 @@ async def main():
 
     with trace("Lead Search"):
         recomended_sectors = await sector_identification_agent(company_profile)
-        print(recomended_sectors)
+        pprint(recomended_sectors.model_dump())
         search_queries = await lead_discovery_agent(recomended_sectors, company_profile)
-        print(search_queries)
-        leads = await run_searches_agent(search_queries)
-        print(leads)
-        companies = await run_company_scraper_agent(leads)
-        print(companies)
+        pprint(search_queries.model_dump())
+        leads = await run_searches_agent(search_queries, company_profile)
+        pprint(leads.model_dump())
+        # companies = await run_company_scraper_agent(leads)
+        # print(companies)
 
 if __name__ == "__main__":
     asyncio.run(main())

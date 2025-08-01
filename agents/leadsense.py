@@ -56,7 +56,7 @@ class LeadDiscoveryOutput(BaseModel):
             for query in item.queries
         )
 
-async def lead_discovery_agent(recomended_sectors: RecomendedSectorList) -> LeadDiscoveryOutput:    
+async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company_profile: dict) -> LeadDiscoveryOutput:    
     print("Generate queries...")
     INSTRUCTIONS = """You are a lead generation assistant. Your job is to create intelligent web 
                       search queries that can help find small businesses in a specific sector.
@@ -70,7 +70,7 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList) -> Lead
         output_type=LeadDiscoveryOutput,
     )
 
-    result = await Runner.run(agent, f"Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}")
+    result = await Runner.run(agent, f"Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}. Company profile: {company_profile}. Make sure queries are created with the cosideration of company location to target local leads.")
     return result.final_output
 # --- END LEAD DISCOVERY AGENT --- #
 
@@ -95,28 +95,14 @@ async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> Lead
     params = {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"], "env": env}
 
     INSTRUCTIONS = """
-                      You are a web search execution agent helping identify small businesses that
-                      are potential leads for a B2B automation consultancy. Your goal is to find company websites,
-                      business directories, or listings of small to mid-sized businesses operating in sectors 
-                      provided by the user. These companies should be suitable leads for process automation and
-                      AI integration.
-                      You will be given structured search queries in English and German.
-
-                        Instructions:
-                        1. Execute each search query using the web.
-                        2. For each query, return 2 high-relevance results.
-                        3. Results should prioritize:
-                            - Small company websites
-                            - Swiss or German businesses
-                            - Business listings (e.g., directories, professional networks)
-                            - Pages that suggest the company is real and active
-                        4. For each result, include:
-                            - Title of the result
-                            - URL
-                            - Short description or snippet
-                        5. Do NOT include ads or irrelevant blog posts.
-                        6. Prioritize professional, business-related content.
-                        7. Output a JSON list of results grouped by search query.
+                    You are a web search agent. Execute the provided search queries and return results.
+                    
+                    Instructions:
+                    1. Execute each search query using the web.
+                    2. Return 2-3 high-relevance results total.
+                    3. For each result, include: Title, URL, Description
+                    4. Output as JSON array of results.
+                    5. Focus on business websites and directories.
                     """ 
     REQUEST = f"""Here are search queries you need to execute: {lead_discovery_output.concatenate_queries()}"""
 
@@ -128,7 +114,7 @@ async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput) -> Lead
             mcp_servers=[mcp_server],
             output_type=AgentOutputSchema(LeadDiscoveryResults, strict_json_schema=False)
         )
-        result = await Runner.run(agent, REQUEST, max_turns=60)
+        result = await Runner.run(agent, REQUEST, max_turns=100)
         return result.final_output
 # --- END LEAD SEARCH AGENT --- #
 
@@ -192,7 +178,7 @@ async def main():
     with trace("Lead Search"):
         recomended_sectors = await sector_identification_agent(company_profile)
         print(recomended_sectors)
-        search_queries = await lead_discovery_agent(recomended_sectors)
+        search_queries = await lead_discovery_agent(recomended_sectors, company_profile)
         print(search_queries)
         leads = await run_searches_agent(search_queries)
         print(leads)

@@ -1,0 +1,19 @@
+customer_search_task:
+  description: >
+    Conduct a thorough search for startups and SMEs in {sector} sector in {country}.
+    Make sure you look for very small customers or ones that only recently started their business.
+    Try multiple search queries to find the customers.
+    Provide a list of their names, websites, and contact information.
+  expected_output: >
+    A list of 10 customers with their names, websites, and contact information.
+  agent: customer_finder
+
+customer_research_task:
+  description: >
+    Research provided customers and try to find an opportunity to sell an AI-based solution or some custom software to them.
+    Be open to any opportunity, even if it's not related to the {sector} sector.
+    Use scraping tools to find the information about my software agency and assess the opportunity.
+    If you find an opportunity, provide a detailed report of the customer, the opportunity, and the solution.
+  expected_output: >
+    A detailed report of the customer, the opportunity, and the solution.
+  agent: customer_researcher

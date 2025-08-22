@@ -55,3 +55,7 @@ Both implementations require API keys. Create `.env` files in the respective dir
 - `crewai/` - CrewAI-based implementation for multi-agent customer finding
 - `openai/` - OpenAI-based implementation using agents framework
 - Each directory contains its own dependencies and configuration files
+
+
+Run leadsense_app: uvicorn leadsense_app.api.server:app --reload
+Run leadsense_ui: npm run dev

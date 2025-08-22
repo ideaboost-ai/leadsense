@@ -224,6 +224,19 @@ async def run_searches_with_serper_agent(lead_discovery_output: LeadDiscoveryOut
 # --- START COMPANY SCRAPER AGENT --- #
 async def run_company_scraper_agent(lead_discovery_result: LeadDiscoveryResults):
     print("Scraping company information...")
+    
+    # Limit the number of URLs to process to prevent timeouts
+    urls = lead_discovery_result.get_concatenated_urls()
+    url_list = [url.strip() for url in urls.split(',') if url.strip()]
+    
+    # Limit to first 3 URLs to prevent timeouts
+    limited_urls = url_list[:3]
+    print(f"Processing {len(limited_urls)} URLs (limited from {len(url_list)} total)")
+    
+    if not limited_urls:
+        print("No URLs to process")
+        return []
+
     params = {"command": "uvx", "args": ["mcp-server-fetch"]}
 
     INSTRUCTIONS = """
@@ -240,8 +253,9 @@ async def run_company_scraper_agent(lead_discovery_result: LeadDiscoveryResults)
                         - phone_number
                         - description
                         - automation_proposal (1–2 sentences how a process automation/AI company could help)
-                        If the page lists multiple companies, extract this information for each one (up to 10 max).
+                        If the page lists multiple companies, extract this information for each one (up to 5 max).
                         Only return what is visible in the provided HTML. Do not guess or fabricate data.
+                        Work quickly and efficiently - focus on the most important information.
 
                         Output JSON format:
                         [
@@ -256,17 +270,22 @@ async def run_company_scraper_agent(lead_discovery_result: LeadDiscoveryResults)
                             }
                         ]
                     """
-    REQUEST = f"""Here are urls to scrap information about companies: {lead_discovery_result.get_concatenated_urls()}"""
+    REQUEST = f"""Here are urls to scrap information about companies: {', '.join(limited_urls)}"""
 
-    async with MCPServerStdio(params=params, client_session_timeout_seconds=60) as mcp_server:
-        agent = Agent(
-            name="CompanyScraperAgent",
-            instructions=INSTRUCTIONS,
-            model="gpt-4o-mini",
-            mcp_servers=[mcp_server],
-        )
-        result = await Runner.run(agent, REQUEST)
-        return result.final_output
+    try:
+        async with MCPServerStdio(params=params, client_session_timeout_seconds=90) as mcp_server:
+            agent = Agent(
+                name="CompanyScraperAgent",
+                instructions=INSTRUCTIONS,
+                model="gpt-4o-mini",
+                mcp_servers=[mcp_server],
+            )
+            result = await Runner.run(agent, REQUEST, max_turns=3)  # Limit turns to prevent infinite loops
+            return result.final_output
+    except Exception as e:
+        print(f"Error in company scraper agent: {str(e)}")
+        # Return empty list instead of failing completely
+        return []
 # --- END COMPANY SCRAPER  AGENT --- #
 
 async def main():

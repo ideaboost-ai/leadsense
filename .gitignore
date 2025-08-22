@@ -58,3 +58,7 @@ logs/
 
 # CrewAI
 output/
+
+# Database
+leadsense.db
+*.db

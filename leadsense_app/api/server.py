@@ -6,7 +6,8 @@ import asyncio
 import httpx
 
 from ..agents.leadsense import sector_identification_agent, RecomendedSectorList
-from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent, run_searches_with_serper_agent, run_company_scraper_agent
+from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent, run_searches_with_serper_agent
+from ..agents.scraper import run_enhanced_company_scraper_agent_original_format
 from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
 
 
@@ -463,59 +464,31 @@ async def discover_leads(payload: DiscoverLeadsRequest):
         print("Running searches with Serper...")
         search_results = await run_searches_with_serper_agent(discovery_output, payload.profile.model_dump())
 
-        # Scrape companies from the resulting URLs with timeout handling
-        print("Starting company scraping...")
+        # Scrape companies from the resulting URLs using enhanced scraper
+        print("Starting enhanced company scraping...")
         companies = []
         
         try:
-            # Set a longer timeout for the scraping operation
-            companies_response = await asyncio.wait_for(
-                run_company_scraper_agent(search_results),
+            # Use the enhanced scraper with timeout handling
+            companies = await asyncio.wait_for(
+                run_enhanced_company_scraper_agent_original_format(search_results),
                 timeout=120.0  # 2 minutes timeout
             )
             
-            # Parse the response - the agent returns a string with JSON embedded
-            import json
-            import re
-            
-            if isinstance(companies_response, str):
-                # Try to extract JSON from the response string
-                # Look for JSON array pattern in the response
-                json_match = re.search(r'```json\s*(\[.*?\])\s*```', companies_response, re.DOTALL)
-                if json_match:
-                    try:
-                        companies = json.loads(json_match.group(1))
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, try to find any array-like structure
-                        array_match = re.search(r'\[.*?\]', companies_response, re.DOTALL)
-                        if array_match:
-                            try:
-                                companies = json.loads(array_match.group(0))
-                            except json.JSONDecodeError:
-                                companies = []
-                else:
-                    # If no JSON block found, try to parse the entire response as JSON
-                    try:
-                        companies = json.loads(companies_response)
-                    except json.JSONDecodeError:
-                        companies = []
-            elif isinstance(companies_response, list):
-                companies = companies_response
-            else:
-                companies = []
+            print(f"Enhanced scraper completed successfully. Found {len(companies)} companies.")
                 
         except asyncio.TimeoutError:
-            print("Company scraping timed out after 2 minutes")
+            print("Enhanced company scraping timed out after 2 minutes")
             companies = []
         except Exception as e:
-            print(f"Error during company scraping: {str(e)}")
+            print(f"Error during enhanced company scraping: {str(e)}")
             companies = []
         
         # Ensure we return a list of dictionaries
         if not isinstance(companies, list):
             companies = []
         
-        # If scraping failed completely, create basic leads from search results
+        # If enhanced scraping failed completely, create basic leads from search results
         if not companies and search_results.results:
             print("Creating fallback leads from search results...")
             companies = []

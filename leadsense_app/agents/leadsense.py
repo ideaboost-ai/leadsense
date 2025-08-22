@@ -7,6 +7,7 @@ import asyncio
 import os
 import httpx
 import json
+from .scraper import run_enhanced_company_scraper_agent_original_format
 
 load_dotenv(override=True)
 
@@ -221,8 +222,16 @@ async def run_searches_with_serper_agent(lead_discovery_output: LeadDiscoveryOut
     return lead_discovery_results
 # --- END SERPER API SEARCH AGENT --- #
 
-# --- START COMPANY SCRAPER AGENT --- #
+# --- START COMPANY SCRAPER AGENT (DEPRECATED) --- #
+# DEPRECATED: This function has been replaced by run_enhanced_company_scraper_agent_original_format
+# in leadsense_app/agents/scraper.py. Use the enhanced version for better performance and reliability.
 async def run_company_scraper_agent(lead_discovery_result: LeadDiscoveryResults):
+    import warnings
+    warnings.warn(
+        "run_company_scraper_agent is deprecated. Use run_enhanced_company_scraper_agent_original_format from leadsense_app/agents/scraper.py instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     print("Scraping company information...")
     
     # Limit the number of URLs to process to prevent timeouts
@@ -305,7 +314,7 @@ async def main():
         pprint(search_queries.model_dump())
         leads = await run_searches_with_serper_agent(search_queries, company_profile)
         pprint(leads.model_dump())
-        companies = await run_company_scraper_agent(leads)
+        companies = await run_enhanced_company_scraper_agent_original_format(leads)
         print(companies)
 
 if __name__ == "__main__":

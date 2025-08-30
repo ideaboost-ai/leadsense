@@ -10,6 +10,9 @@ import json
 import re
 from urllib.parse import urlparse
 import logging
+from bs4 import BeautifulSoup
+from .fetcher import fetch_html_content
+from .helper import extract_json_string
 
 load_dotenv(override=True)
 
@@ -105,30 +108,23 @@ async def scrape_single_company_page(html_content: str, url: str) -> List[Compan
         
         INSTRUCTIONS = """
         You are a Company Information Extractor. Extract structured information about a single company from the provided HTML.
-        
-        Extract the following information:
-        - company_name: The main company name
-        - website_url: The company's main website URL
-        - address: Full address if available
-        - contact_email: Email address
-        - phone_number: Phone number
-        - description: Company description or about section
-        - automation_proposal: 1-2 sentences on how process automation/AI could help this company
-        
-        Return as JSON array with one company object:
-        [{
-            "company_name": "...",
-            "website_url": "...",
-            "address": "...",
-            "contact_email": "...",
-            "phone_number": "...",
-            "description": "...",
-            "automation_proposal": "..."
-        }]
-        
-        Only extract information that is clearly visible in the HTML. Do not guess or fabricate data.
+
+        RULES:
+        - The provided HTML snippet may be partial or simplified. DO NOT ask for more HTML.
+        - Output ONLY a JSON array with exactly one object.
+        - Do not include code fences, language labels, or commentary.
+        - Only extract information that is clearly visible in the HTML. Do not guess or fabricate data.
+
+        Each object must contain:
+        - company_name (string, required)
+        - website_url (string or null)
+        - address (string or null)
+        - contact_email (string or null)
+        - phone_number (string or null)
+        - description (string or null)
+        - automation_proposal (string, generic suggestion)
         """
-        
+
         async with MCPServerStdio(params=params, client_session_timeout_seconds=15) as mcp_server:
             agent = Agent(
                 name="SingleCompanyScraper",
@@ -137,32 +133,35 @@ async def scrape_single_company_page(html_content: str, url: str) -> List[Compan
                 mcp_servers=[mcp_server],
             )
             
-            result = await Runner.run(agent, f"Extract company information from this HTML: {html_content[:5000]}", max_turns=2)
+            user_msg = (
+                "Extract one company object from the following HTML. "
+                "Return ONLY a JSON array with one object.\n\n"
+                f"{html_content[:5000]}"
+            )
+
+            result = await Runner.run(agent, user_msg, max_turns=1)
             
-            # Parse the result and convert to CompanyData objects
-            companies = []
+            companies: List[CompanyData] = []
             if result.final_output:
                 try:
-                    if isinstance(result.final_output, str):
-                        data = json.loads(result.final_output)
-                    else:
-                        data = result.final_output
-                    
-                    if isinstance(data, list):
-                        for company_data in data:
-                            if isinstance(company_data, dict):
-                                company = CompanyData(
-                                    company_name=company_data.get('company_name', 'Unknown Company'),
-                                    website_url=company_data.get('website_url'),
-                                    address=company_data.get('address'),
-                                    contact_email=company_data.get('contact_email'),
-                                    phone_number=company_data.get('phone_number'),
-                                    description=company_data.get('description'),
-                                    automation_proposal=company_data.get('automation_proposal'),
-                                    source_url=url,
-                                    confidence_score=0.8  # High confidence for single company pages
-                                )
-                                companies.append(company)
+                    raw = result.final_output if isinstance(result.final_output, str) else json.dumps(result.final_output)
+                    clean = extract_json_string(raw)
+                    data = json.loads(clean)
+
+                    if isinstance(data, list) and data:
+                        company_data = data[0]
+                        if isinstance(company_data, dict):
+                            companies.append(CompanyData(
+                                company_name=company_data.get('company_name', 'Unknown Company'),
+                                website_url=company_data.get('website_url'),
+                                address=company_data.get('address'),
+                                contact_email=company_data.get('contact_email'),
+                                phone_number=company_data.get('phone_number'),
+                                description=company_data.get('description'),
+                                automation_proposal=company_data.get('automation_proposal'),
+                                source_url=url,
+                                confidence_score=0.8  # Higher confidence for single-company pages
+                            ))
                 except Exception as e:
                     logger.error(f"Error parsing single company data: {str(e)}")
             
@@ -171,6 +170,29 @@ async def scrape_single_company_page(html_content: str, url: str) -> List[Compan
     except Exception as e:
         logger.error(f"Error scraping single company page {url}: {str(e)}")
         return []
+
+def preprocess_html_for_listings(html: str, budget: int = 12000) -> str:
+    """
+    Preprocess HTML to focus on listing sections.
+    """
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove noise
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+    for sel in ["header", "nav", "footer", "#cookie", ".cookie", ".banner", ".breadcrumbs"]:
+        for t in soup.select(sel):
+            t.decompose()
+
+    # Collect common listing containers (generic)
+    containers = soup.select(",".join([
+        "ul li", "ol li", "table tr", "div", "section", "article"
+    ]))
+
+    candidates = [str(c) for c in containers if c.get_text(strip=True)]
+    joined = "\n".join(candidates)
+    return joined[:budget]
 
 # --- AGGREGATOR PAGE SCRAPING --- #
 async def scrape_aggregator_page(html_content: str, url: str) -> List[CompanyData]:
@@ -181,41 +203,31 @@ async def scrape_aggregator_page(html_content: str, url: str) -> List[CompanyDat
         if not html_content or len(html_content.strip()) < 100:
             logger.warning(f"HTML content too short for {url}: {len(html_content)} characters")
             return []
-            
+
+        trimmed = preprocess_html_for_listings(html_content)
+        logger.info(f"[{url}] Preprocessed HTML for listings: {len(trimmed)} characters")
+
         params = {"command": "uvx", "args": ["mcp-server-fetch"]}
-        
+
         INSTRUCTIONS = """
-        You are a Business Directory Parser. Extract information about multiple companies from a directory or aggregator page.
-        
-        Look for:
-        - Company listings in tables, lists, or cards
-        - Business directories
-        - Search result pages with multiple companies
-        - Local business listings
-        
-        For each company found, extract:
-        - company_name: Company name
-        - website_url: Company website (if available)
-        - address: Address (if available)
-        - contact_email: Email (if available)
-        - phone_number: Phone (if available)
-        - description: Brief description (if available)
-        - automation_proposal: Generic automation proposal
-        
-        Return as JSON array with multiple company objects:
-        [{
-            "company_name": "...",
-            "website_url": "...",
-            "address": "...",
-            "contact_email": "...",
-            "phone_number": "...",
-            "description": "...",
-            "automation_proposal": "..."
-        }]
-        
-        Extract up to 10 companies maximum. Only include companies that have at least a name.
+        You are a Business Directory Parser. Extract multiple companies from a directory or aggregator page.
+
+        RULES:
+        - The provided HTML snippet may be incomplete or simplified. DO NOT ask for more HTML.
+        - Ignore headers, navigation, scripts, and styles.
+        - If no companies are found, return [].
+        - Output ONLY a JSON array of up to 10 objects, no commentary.
+
+        Each object must contain:
+        - company_name (string, required)
+        - website_url (string or null)
+        - address (string or null)
+        - contact_email (string or null)
+        - phone_number (string or null)
+        - description (string or null)
+        - automation_proposal (string, generic suggestion)
         """
-        
+
         async with MCPServerStdio(params=params, client_session_timeout_seconds=15) as mcp_server:
             agent = Agent(
                 name="AggregatorScraper",
@@ -223,40 +235,44 @@ async def scrape_aggregator_page(html_content: str, url: str) -> List[CompanyDat
                 model="gpt-4o-mini",
                 mcp_servers=[mcp_server],
             )
-            
-            result = await Runner.run(agent, f"Extract multiple companies from this directory page: {html_content[:8000]}", max_turns=2)
-            
-            # Parse the result and convert to CompanyData objects
-            companies = []
+
+            user_msg = (
+                "Extract up to 10 companies from the following content. "
+                "Return ONLY a JSON array.\n\n"
+                f"{trimmed}"
+            )
+
+            result = await Runner.run(agent, user_msg, max_turns=1)
+
+            companies: List[CompanyData] = []
             if result.final_output:
                 try:
-                    if isinstance(result.final_output, str):
-                        data = json.loads(result.final_output)
-                    else:
-                        data = result.final_output
-                    
+                    logger.info(f"[{url}] Aggregator scrape output: {result.final_output[:500]}...")
+                    raw = result.final_output if isinstance(result.final_output, str) else json.dumps(result.final_output)
+                    clean = extract_json_string(raw)
+                    data = json.loads(clean)
+
                     if isinstance(data, list):
                         for company_data in data:
-                            if isinstance(company_data, dict) and company_data.get('company_name'):
-                                company = CompanyData(
-                                    company_name=company_data.get('company_name'),
-                                    website_url=company_data.get('website_url'),
-                                    address=company_data.get('address'),
-                                    contact_email=company_data.get('contact_email'),
-                                    phone_number=company_data.get('phone_number'),
-                                    description=company_data.get('description'),
-                                    automation_proposal=company_data.get('automation_proposal'),
+                            if isinstance(company_data, dict) and company_data.get("company_name"):
+                                companies.append(CompanyData(
+                                    company_name=company_data.get("company_name"),
+                                    website_url=company_data.get("website_url"),
+                                    address=company_data.get("address"),
+                                    contact_email=company_data.get("contact_email"),
+                                    phone_number=company_data.get("phone_number"),
+                                    description=company_data.get("description"),
+                                    automation_proposal=company_data.get("automation_proposal"),
                                     source_url=url,
-                                    confidence_score=0.6  # Lower confidence for aggregator pages
-                                )
-                                companies.append(company)
+                                    confidence_score=0.6
+                                ))
                 except Exception as e:
-                    logger.error(f"Error parsing aggregator data: {str(e)}")
-            
+                    logger.error(f"[{url}] Error parsing aggregator data: {str(e)}")
+
             return companies
-            
+
     except Exception as e:
-        logger.error(f"Error scraping aggregator page {url}: {str(e)}")
+        logger.error(f"[{url}] Error scraping aggregator page {url}: {str(e)}")
         return []
 
 # --- FALLBACK: SEARCH METADATA EXTRACTION --- #
@@ -362,53 +378,40 @@ async def run_enhanced_company_scraper_agent(lead_discovery_result) -> ScrapingR
             logger.info(f"Starting to process URL: {url}")
             
             # Fetch the webpage content
-            params = {"command": "uvx", "args": ["mcp-server-fetch"]}
-            
             try:
-                async with MCPServerStdio(params=params, client_session_timeout_seconds=15) as mcp_server:
-                    logger.info(f"Fetching content from: {url}")
+                html_content = await fetch_html_content(url)
+                
+                if not html_content:
+                    error_msg = f"Failed to fetch content from {url} - no response received"
+                    logger.warning(error_msg)
+                    return [], False, error_msg
+                
+                logger.info(f"Successfully fetched {len(html_content)} characters from {url}")
+                logger.info(f"Fetched content from {url}: {html_content[0:100]}...")
+                
+                # Detect page type
+                logger.info(f"Detecting page type for: {url}")
+                page_type = await detect_page_type(html_content, url)
+                logger.info(f"Page type detected as: {page_type} for {url}")
+                
+                # Scrape based on page type
+                if page_type == 'single_company':
+                    logger.info(f"Scraping single company page: {url}")
+                    companies = await scrape_single_company_page(html_content, url)
+                else:  # aggregator
+                    logger.info(f"Scraping aggregator page: {url}")
+                    companies = await scrape_aggregator_page(html_content, url)
+                
+                if companies:
+                    logger.info(f"Successfully extracted {len(companies)} companies from {url}")
+                    return companies, True, ""
+                else:
+                    error_msg = f"No companies extracted from {url} - page type: {page_type}"
+                    logger.warning(error_msg)
+                    return [], False, error_msg
                     
-                    # First, get the HTML content
-                    fetch_agent = Agent(
-                        name="ContentFetcher",
-                        instructions="Fetch the HTML content of the provided URL. Return only the HTML content.",
-                        model="gpt-4o-mini",
-                        mcp_servers=[mcp_server],
-                    )
-                    
-                    fetch_result = await Runner.run(fetch_agent, f"Fetch content from: {url}", max_turns=1)
-                    
-                    if not fetch_result or not fetch_result.final_output:
-                        error_msg = f"Failed to fetch content from {url} - no response received"
-                        logger.warning(error_msg)
-                        return [], False, error_msg
-                    
-                    html_content = fetch_result.final_output
-                    logger.info(f"Successfully fetched {len(html_content)} characters from {url}")
-                    
-                    # Detect page type
-                    logger.info(f"Detecting page type for: {url}")
-                    page_type = await detect_page_type(html_content, url)
-                    logger.info(f"Page type detected as: {page_type} for {url}")
-                    
-                    # Scrape based on page type
-                    if page_type == 'single_company':
-                        logger.info(f"Scraping single company page: {url}")
-                        companies = await scrape_single_company_page(html_content, url)
-                    else:  # aggregator
-                        logger.info(f"Scraping aggregator page: {url}")
-                        companies = await scrape_aggregator_page(html_content, url)
-                    
-                    if companies:
-                        logger.info(f"Successfully extracted {len(companies)} companies from {url}")
-                        return companies, True, ""
-                    else:
-                        error_msg = f"No companies extracted from {url} - page type: {page_type}"
-                        logger.warning(error_msg)
-                        return [], False, error_msg
-                        
-            except Exception as mcp_error:
-                error_msg = f"MCP server error for {url}: {str(mcp_error)}"
+            except Exception as fetch_error:
+                error_msg = f"HTTP request error for {url}: {str(fetch_error)}"
                 logger.error(error_msg)
                 return [], False, error_msg
                     

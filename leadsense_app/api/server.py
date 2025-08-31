@@ -6,8 +6,7 @@ import asyncio
 import httpx
 
 from ..agents.leadsense import sector_identification_agent, RecomendedSectorList
-from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent, run_searches_with_serper_agent
-from ..agents.scraper import run_enhanced_company_scraper_agent_original_format
+from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent
 from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
 
 
@@ -460,60 +459,30 @@ async def discover_leads(payload: DiscoverLeadsRequest):
         print("Starting lead discovery...")
         discovery_output = await lead_discovery_agent(sector_list, payload.profile.model_dump())
 
-        # Run searches via Serper
-        print("Running searches with Serper...")
-        search_results = await run_searches_with_serper_agent(discovery_output, payload.profile.model_dump())
-
-        # Scrape companies from the resulting URLs using enhanced scraper
-        print("Starting enhanced company scraping...")
+        # Run lead scraping agent to get structured leads
+        print("Starting lead scraping...")
+        from ..agents.leadsense import run_lead_scraping_agent, tool_map
+        scraping_results = await run_lead_scraping_agent(discovery_output, tool_map, payload.profile.model_dump())
+        
+        # Convert to frontend-compatible format
         companies = []
+        for lead in scraping_results.leads:
+            company_data = {
+                "company_name": lead.company_name,
+                "website_url": lead.website_url,
+                "address": "",  # Not provided by scraping agent
+                "contact_email": "",  # Not provided by scraping agent
+                "phone_number": "",  # Not provided by scraping agent
+                "description": lead.description,
+                "automation_proposal": lead.lead_reasoning,  # Use lead reasoning as automation proposal
+                "linkedin_info": lead.linkedin_info,
+                "sector": lead.sector,
+                "location": lead.location,
+                "confidence_score": lead.confidence_score
+            }
+            companies.append(company_data)
         
-        try:
-            # Use the enhanced scraper with timeout handling
-            companies = await asyncio.wait_for(
-                run_enhanced_company_scraper_agent_original_format(search_results),
-                timeout=120.0  # 2 minutes timeout
-            )
-            
-            print(f"Enhanced scraper completed successfully. Found {len(companies)} companies.")
-                
-        except asyncio.TimeoutError:
-            print("Enhanced company scraping timed out after 2 minutes")
-            companies = []
-        except Exception as e:
-            print(f"Error during enhanced company scraping: {str(e)}")
-            companies = []
-        
-        # Ensure we return a list of dictionaries
-        if not isinstance(companies, list):
-            companies = []
-        
-        # If enhanced scraping failed completely, create basic leads from search results
-        if not companies and search_results.results:
-            print("Creating fallback leads from search results...")
-            companies = []
-            for result in search_results.results[:5]:  # Limit to 5 results
-                # Extract company name from title or URL
-                company_name = result.Title
-                if not company_name and result.URL:
-                    # Try to extract from URL
-                    from urllib.parse import urlparse
-                    parsed = urlparse(str(result.URL))
-                    company_name = parsed.netloc.replace('www.', '').split('.')[0]
-                    company_name = company_name.replace('-', ' ').replace('_', ' ').title()
-                
-                if company_name:
-                    companies.append({
-                        "company_name": company_name,
-                        "website_url": str(result.URL),
-                        "address": "",
-                        "contact_email": "",
-                        "phone_number": "",
-                        "description": result.Description or "Company found through web search",
-                        "automation_proposal": f"Potential automation opportunities for {company_name} based on search results"
-                    })
-            
-        print(f"Successfully processed {len(companies)} companies")
+        print(f"Found {len(companies)} companies through lead scraping")
         return companies
         
     except Exception as e:

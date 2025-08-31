@@ -2,12 +2,14 @@ from dotenv import load_dotenv
 from agents import Agent, Runner, trace, Tool, AgentOutputSchema
 from agents.mcp import MCPServerStdio
 from pydantic import BaseModel, Field, HttpUrl
+from typing import Optional
 from pprint import pprint
 import asyncio
 import os
 import httpx
 import json
-from .scraper import run_enhanced_company_scraper_agent_original_format
+from openai import AsyncOpenAI
+from .tools import scrape_website, google_search, extract_company_linkedin_profile, reflection, tools, tool_map
 
 load_dotenv(override=True)
 
@@ -27,7 +29,7 @@ async def sector_identification_agent(company_profile: dict) -> RecomendedSector
     print("Identifing sectors...")
     INSTRUCTIONS = """You are a business development expert helping a small AI company
                        identify the most promising business sectors to target for automation and AI integration.
-                       Given the company profile, recommend 10 sectors or niches the company should target. 
+                       Given the company profile, recommend 1 sectors or niches the company should target. 
                        For each recommendation, include a short justification for why this sector is a good 
                        fit based on the company's size, location, and services. Please be creative and think
                        outside the box.
@@ -67,7 +69,7 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company
     print("Generate queries...")
     INSTRUCTIONS = """You are a lead generation assistant. Your job is to create intelligent web 
                       search queries that can help find small businesses in a specific sector.
-                      For each sector, generate 3 search queries in both English and German that 
+                      For each sector, generate 1 search queries in both English and German that 
                       can help discover potential leads (e.g., small companies, service providers).  
                       Order them by relevance to the company profile. Prioritize local leads, small companies
                       and startups without dedicated IT departments.
@@ -89,7 +91,7 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company
     return result.final_output
 # --- END LEAD DISCOVERY AGENT --- #
 
-# --- START LEAD SEARCH AGENT (LEGACY - BRAVE SEARCH) --- #
+# --- LEAD SCRAPING AGENT --- #
 class SearchResultItem(BaseModel):
     Title: str
     URL: HttpUrl
@@ -105,197 +107,189 @@ class LeadDiscoveryResults(BaseModel):
             urls.append(str(item.URL))  # Convert HttpUrl to string if needed
         return ", ".join(urls)
 
-async def run_searches_agent(lead_discovery_output: LeadDiscoveryOutput, company_profile: dict) -> LeadDiscoveryResults:
-    """
-    LEGACY: Brave search agent - may be slow or unresponsive.
-    Use run_searches_with_serper_agent instead for better performance.
-    """
-    print("Running searches with Brave API (legacy)...")
-    env = {"BRAVE_API_KEY": os.getenv("BRAVE_API_KEY")}
-    params = {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"], "env": env}
+class CompanyLead(BaseModel):
+    company_name: str
+    website_url: str
+    description: str
+    linkedin_info: Optional[dict] = None
+    lead_reasoning: str
+    sector: str
+    location: str
+    confidence_score: float  # 0-1
 
-    INSTRUCTIONS = f"""
-                    You are a web search agent. Execute the provided search queries and return results.
-                    
-                    Instructions:
-                    1. Execute each search query using the web.
-                    2. Return 2-3 high-relevance results total.
-                    3. For each result, include: Title, URL, Description
-                    4. Output as JSON array of results.
-                    5. Focus on business websites and directories.
-                    6. Order results by relevance to the company profile: {company_profile}.
-                    """ 
-    REQUEST = f"""Here are search queries you need to execute: {lead_discovery_output.concatenate_queries()}"""
+class LeadScrapingResults(BaseModel):
+    leads: list[CompanyLead]
+    total_searched: int
+    total_found: int
+    sectors_covered: list[str]
 
-    async with MCPServerStdio(params=params, client_session_timeout_seconds=30) as mcp_server:
-        agent = Agent(
-            name="agent",
-            instructions=INSTRUCTIONS,
-            model="gpt-4o-mini",
-            mcp_servers=[mcp_server],
-            output_type=AgentOutputSchema(LeadDiscoveryResults, strict_json_schema=False)
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+async def run_lead_scraping_agent(search_queries: LeadDiscoveryOutput, tool_map, company_profile: dict) -> LeadScrapingResults:
+    """
+    Enhanced lead scraping agent that researches companies, extracts data, and evaluates lead quality.
+    """
+    INSTRUCTIONS = """You are a lead research specialist. Your job is to:
+
+1. **Search for companies** using the provided queries
+2. **Analyze search results** to identify individual companies vs aggregator pages
+3. **Scrape company pages** to extract detailed information
+4. **Extract LinkedIn data** for each company using the extract_company_linkedin_profile tool
+5. **Evaluate lead quality** based on our company profile and provide reasoning
+6. **Return structured data** with company details and lead reasoning
+
+For aggregator pages (like "Top 10 companies in Zurich"), extract multiple companies.
+For single company pages, extract detailed information about that company.
+
+Always use reflection before finalizing results to ensure comprehensive research.
+
+IMPORTANT: You must return a JSON object with this exact structure:
+{
+    "leads": [
+        {
+            "company_name": "Company Name",
+            "website_url": "https://company.com",
+            "description": "Company description",
+            "linkedin_info": {"data": "from linkedin"},
+            "lead_reasoning": "Why this is a good lead",
+            "sector": "Financial Services",
+            "location": "Zurich, Switzerland",
+            "confidence_score": 0.85
+        }
+    ],
+    "total_searched": 10,
+    "total_found": 5,
+    "sectors_covered": ["Financial Services", "Healthcare"]
+}"""
+
+    messages = [
+        {"role": "system", "content": f"{INSTRUCTIONS}\n\nOur company profile: {company_profile}"},
+        {"role": "user", "content": f"Research leads using these queries: {search_queries.concatenate_queries()}\n\nSectors to focus on: {[item.sector for item in search_queries.searches]}"}
+    ]
+
+    all_leads = []
+    searched_urls = set()
+    max_iterations = 10  # Prevent infinite loops
+    iteration = 0
+
+    while iteration < max_iterations:
+        iteration += 1
+        print(f"**[INFO] Lead scraping iteration {iteration}/{max_iterations}**")
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini", 
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
         )
-        result = await Runner.run(agent, REQUEST, max_turns=100)
-        return result.final_output
-# --- END LEAD SEARCH AGENT (LEGACY) --- #
 
-# --- START SERPER API SEARCH AGENT --- #
-async def run_searches_with_serper_agent(lead_discovery_output: LeadDiscoveryOutput, company_profile: dict) -> LeadDiscoveryResults:
-    print("Running searches with Serper API...")
-    
-    SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-    if not SERPER_API_KEY:
-        raise ValueError("SERPER_API_KEY not found in environment variables. Please add it to your .env file.")
-    
-    # Extract all queries from the lead discovery output
-    all_queries = []
-    for item in lead_discovery_output.searches:
-        for query in item.queries:
-            all_queries.append(query.query)
-    
-    if not all_queries:
-        print("No queries found in lead discovery output")
-        return LeadDiscoveryResults(results=[])
-    
-    search_results = []
-    order_counter = 1
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for query in all_queries[:3]:  # Limit to 3 queries to avoid rate limits
+        response_message = response.choices[0].message
+        messages.append(response_message)
+
+        if not response_message.tool_calls:
+            # Try to parse the final response as structured data
             try:
-                print(f"Searching for: {query}")
-                
-                # Prepare the request payload
-                payload = {
-                    "q": query,
-                    "num": 3,  # Number of results per query
-                    "gl": "ch",  # Country: Switzerland
-                    "hl": "en"   # Language: English
-                }
-                
-                headers = {
-                    "X-API-KEY": SERPER_API_KEY,
-                    "Content-Type": "application/json"
-                }
-                
-                # Make the request to Serper API
-                response = await client.post(
-                    "https://google.serper.dev/search",
-                    headers=headers,
-                    json=payload
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
+                content = response_message.content
+                # Look for JSON structure in the response
+                if "{" in content and "}" in content:
+                    # Extract JSON from the response
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    json_str = content[start:end]
+                    result_data = json.loads(json_str)
                     
-                    # Extract organic results
-                    organic_results = data.get("organic", [])
+                    # Convert to LeadScrapingResults
+                    leads = []
+                    for lead_data in result_data.get("leads", []):
+                        lead = CompanyLead(
+                            company_name=lead_data.get("company_name", ""),
+                            website_url=lead_data.get("website_url", ""),
+                            description=lead_data.get("description", ""),
+                            linkedin_info=lead_data.get("linkedin_info"),
+                            lead_reasoning=lead_data.get("lead_reasoning", ""),
+                            sector=lead_data.get("sector", ""),
+                            location=lead_data.get("location", ""),
+                            confidence_score=lead_data.get("confidence_score", 0.5)
+                        )
+                        leads.append(lead)
                     
-                    for result in organic_results[:2]:  # Take top 2 results per query
-                        try:
-                            search_result = SearchResultItem(
-                                Title=result.get("title", "")[:200],  # Limit title length
-                                URL=result.get("link", ""),
-                                Description=result.get("snippet", "")[:500],  # Limit description length
-                                Order=order_counter
-                            )
-                            search_results.append(search_result)
-                            order_counter += 1
-                        except Exception as e:
-                            print(f"Error creating search result for query '{query}': {str(e)}")
-                            continue
-                        
+                    return LeadScrapingResults(
+                        leads=leads,
+                        total_searched=result_data.get("total_searched", len(searched_urls)),
+                        total_found=result_data.get("total_found", len(leads)),
+                        sectors_covered=result_data.get("sectors_covered", [item.sector for item in search_queries.searches])
+                    )
                 else:
-                    print(f"Error with Serper API for query '{query}': {response.status_code} - {response.text}")
-                    
-            except httpx.TimeoutException:
-                print(f"Timeout error searching for '{query}'")
-                continue
+                    # Fallback: return empty results
+                    print("**[WARNING] Could not parse structured results from response**")
+                    return LeadScrapingResults(
+                        leads=[],
+                        total_searched=len(searched_urls),
+                        total_found=0,
+                        sectors_covered=[item.sector for item in search_queries.searches]
+                    )
             except Exception as e:
-                print(f"Error searching for '{query}': {str(e)}")
+                print(f"**[ERROR] Failed to parse results: {e}**")
+                return LeadScrapingResults(
+                    leads=[],
+                    total_searched=len(searched_urls),
+                    total_found=0,
+                    sectors_covered=[item.sector for item in search_queries.searches]
+                )
+
+        for tool_call in response_message.tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            
+            print(f'**[INFO] Calling tool: {function_name} with args {function_args}**')
+            
+            # Check if the tool exists in tool_map
+            if function_name not in tool_map:
+                print(f'**[WARNING] Tool "{function_name}" not found in tool_map. Available tools: {list(tool_map.keys())}**')
+                error_response = f"Tool '{function_name}' is not available. Please use one of the available tools: {list(tool_map.keys())}"
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": json.dumps({"error": error_response})
+                })
                 continue
-    
-    print(f"Found {len(search_results)} results using Serper API")
-    
-    # Create the LeadDiscoveryResults object
-    lead_discovery_results = LeadDiscoveryResults(results=search_results)
-    return lead_discovery_results
-# --- END SERPER API SEARCH AGENT --- #
+            
+            function_call = tool_map[function_name]
+            try:
+                # Try to call as async first
+                function_response = await function_call(**function_args)
+            except TypeError:
+                # If it fails, call as sync function
+                function_response = function_call(**function_args)
+            except Exception as e:
+                # Handle any other errors during function execution
+                print(f'**[ERROR] Tool "{function_name}" failed with error: {str(e)}**')
+                function_response = {"error": f"Tool execution failed: {str(e)}"}
 
-# --- START COMPANY SCRAPER AGENT (DEPRECATED) --- #
-# DEPRECATED: This function has been replaced by run_enhanced_company_scraper_agent_original_format
-# in leadsense_app/agents/scraper.py. Use the enhanced version for better performance and reliability.
-async def run_company_scraper_agent(lead_discovery_result: LeadDiscoveryResults):
-    import warnings
-    warnings.warn(
-        "run_company_scraper_agent is deprecated. Use run_enhanced_company_scraper_agent_original_format from leadsense_app/agents/scraper.py instead.",
-        DeprecationWarning,
-        stacklevel=2
+            print(f'**[FUNCTION CALL RESULT] {function_name}: {str(function_response)[:200]}...**')
+
+            # Track searched URLs for google_search calls
+            if function_name == "google_search":
+                searched_urls.add(f"search: {function_args.get('query', '')}")
+
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(function_response)
+            })
+
+    # If we reach here, return empty results
+    print("**[WARNING] Max iterations reached, returning empty results**")
+    return LeadScrapingResults(
+        leads=[],
+        total_searched=len(searched_urls),
+        total_found=0,
+        sectors_covered=[item.sector for item in search_queries.searches]
     )
-    print("Scraping company information...")
-    
-    # Limit the number of URLs to process to prevent timeouts
-    urls = lead_discovery_result.get_concatenated_urls()
-    url_list = [url.strip() for url in urls.split(',') if url.strip()]
-    
-    # Limit to first 3 URLs to prevent timeouts
-    limited_urls = url_list[:3]
-    print(f"Processing {len(limited_urls)} URLs (limited from {len(url_list)} total)")
-    
-    if not limited_urls:
-        print("No URLs to process")
-        return []
 
-    params = {"command": "uvx", "args": ["mcp-server-fetch"]}
-
-    INSTRUCTIONS = """
-                        You are a Company Scraper Agent.
-                        Your task is to extract structured information about one or more businesses from a webpage.
-                        You will receive either:
-                        - A direct company website
-                        - A business listing page (with multiple companies)
-                        For each company, extract:
-                        - company_name
-                        - website_url
-                        - address
-                        - contact_email
-                        - phone_number
-                        - description
-                        - automation_proposal (1–2 sentences how a process automation/AI company could help)
-                        If the page lists multiple companies, extract this information for each one (up to 5 max).
-                        Only return what is visible in the provided HTML. Do not guess or fabricate data.
-                        Work quickly and efficiently - focus on the most important information.
-
-                        Output JSON format:
-                        [
-                            {
-                                "company_name": "...",
-                                "website_url": "...",
-                                "address": "...",
-                                "contact_email": "...",
-                                "phone_number": "...",
-                                "description": "...",
-                                "automation_proposal": "..."
-                            }
-                        ]
-                    """
-    REQUEST = f"""Here are urls to scrap information about companies: {', '.join(limited_urls)}"""
-
-    try:
-        async with MCPServerStdio(params=params, client_session_timeout_seconds=90) as mcp_server:
-            agent = Agent(
-                name="CompanyScraperAgent",
-                instructions=INSTRUCTIONS,
-                model="gpt-4o-mini",
-                mcp_servers=[mcp_server],
-            )
-            result = await Runner.run(agent, REQUEST, max_turns=3)  # Limit turns to prevent infinite loops
-            return result.final_output
-    except Exception as e:
-        print(f"Error in company scraper agent: {str(e)}")
-        # Return empty list instead of failing completely
-        return []
-# --- END COMPANY SCRAPER  AGENT --- #
+# --- END LEAD SCRAPING AGENT --- #
 
 async def main():
     company_profile = {
@@ -312,11 +306,26 @@ async def main():
         pprint(recomended_sectors.model_dump())
         search_queries = await lead_discovery_agent(recomended_sectors, company_profile)
         pprint(search_queries.model_dump())
-        leads = await run_searches_with_serper_agent(search_queries, company_profile)
-        pprint(leads.model_dump())
-        companies = await run_enhanced_company_scraper_agent_original_format(leads)
-        print(companies)
-
+        leads = await run_lead_scraping_agent(search_queries, tool_map, company_profile)
+        
+        print(f"\n=== LEAD SCRAPING RESULTS ===")
+        print(f"Total searched: {leads.total_searched}")
+        print(f"Total found: {leads.total_found}")
+        print(f"Sectors covered: {leads.sectors_covered}")
+        print(f"\n=== LEADS FOUND ===")
+        
+        for i, lead in enumerate(leads.leads, 1):
+            print(f"\n{i}. {lead.company_name}")
+            print(f"   Website: {lead.website_url}")
+            print(f"   Sector: {lead.sector}")
+            print(f"   Location: {lead.location}")
+            print(f"   Confidence: {lead.confidence_score:.2f}")
+            print(f"   Description: {lead.description[:100]}...")
+            print(f"   Reasoning: {lead.lead_reasoning[:100]}...")
+            if lead.linkedin_info:
+                print(f"   LinkedIn: Data available")
+            print()
+        
 if __name__ == "__main__":
     asyncio.run(main())
 

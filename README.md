@@ -57,5 +57,9 @@ Both implementations require API keys. Create `.env` files in the respective dir
 - Each directory contains its own dependencies and configuration files
 
 
-Run leadsense_app: uvicorn leadsense_app.api.server:app --reload
+From the project root (/home/kamil/projects/leadsense), use this command:
+source leadsense_app/.venv/bin/activate && python -m uvicorn leadsense_app.api.server:app --reload
+
 Run leadsense_ui: npm run dev
+
+Run without ui: source leadsense_app/.venv/bin/activate && python -m leadsense_app.agents.leadsense

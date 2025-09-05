@@ -13,7 +13,8 @@ const DEFAULT_PROFILE = {
   description: 'Tailored software solutions including AI integration.',
   team_size: 5,
   core_services: ['process automation', 'AI integration'],
-  languages: ['English', 'German']
+  languages: ['English', 'German'],
+  special_offer: ''
 }
 
 function Home() {
@@ -98,7 +99,8 @@ function Home() {
           description: profile.description,
           team_size: profile.team_size,
           core_services: profile.core_services,
-          languages: profile.languages
+          languages: profile.languages,
+          special_offer: profile.special_offer || ''
         })
         setProfileId(profile.id)
       }

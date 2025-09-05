@@ -1,12 +1,22 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import asyncio
 import httpx
+import json
 
-from ..agents.leadsense import sector_identification_agent, RecomendedSectorList
-from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent
+from ..agents.leadsense import (
+    sector_identification_agent, 
+    RecomendedSectorList,
+    RecomendedSectorItem, 
+    lead_discovery_agent,
+    CompanyLead,
+    generate_email_proposal,
+    generate_linkedin_message,
+    EmailVersions,
+    LinkedInVersions
+)
 from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
 
 
@@ -33,6 +43,7 @@ class CompanyProfile(BaseModel):
     team_size: int
     core_services: List[str]
     languages: List[str]
+    special_offer: str = ""
 
 
 class CompanyProfileResponse(BaseModel):
@@ -43,6 +54,7 @@ class CompanyProfileResponse(BaseModel):
     team_size: int
     core_services: List[str]
     languages: List[str]
+    special_offer: str
     created_at: str
     updated_at: str
 
@@ -69,6 +81,8 @@ class LeadResponseItem(BaseModel):
     status: str
     priority: str
     notes: Optional[str] = None
+    automation_email: Optional[Dict] = None
+    linkedin_message: Optional[Dict] = None
     created_at: str
     updated_at: str
 
@@ -149,6 +163,7 @@ async def get_company_profiles():
                     team_size=p["team_size"],
                     core_services=p["core_services"],
                     languages=p["languages"],
+                    special_offer=p.get("special_offer", ""),
                     created_at=p["created_at"],
                     updated_at=p["updated_at"]
                 )
@@ -177,6 +192,7 @@ async def get_company_profile(profile_id: int):
                 team_size=profile["team_size"],
                 core_services=profile["core_services"],
                 languages=profile["languages"],
+                special_offer=profile.get("special_offer", ""),
                 created_at=profile["created_at"],
                 updated_at=profile["updated_at"]
             )
@@ -213,6 +229,7 @@ async def update_company_profile(profile_id: int, profile: CompanyProfile):
                 team_size=updated_profile["team_size"],
                 core_services=updated_profile["core_services"],
                 languages=updated_profile["languages"],
+                special_offer=updated_profile.get("special_offer", ""),
                 created_at=updated_profile["created_at"],
                 updated_at=updated_profile["updated_at"]
             )
@@ -240,6 +257,7 @@ async def create_company_profile(profile: CompanyProfile):
                 team_size=created_profile["team_size"],
                 core_services=created_profile["core_services"],
                 languages=created_profile["languages"],
+                special_offer=created_profile.get("special_offer", ""),
                 created_at=created_profile["created_at"],
                 updated_at=created_profile["updated_at"]
             )
@@ -270,6 +288,8 @@ async def get_saved_leads():
                     status=lead["status"],
                     priority=lead["priority"],
                     notes=lead.get("notes"),
+                    automation_email=json.loads(lead.get("automation_email")) if lead.get("automation_email") else None,
+                    linkedin_message=json.loads(lead.get("linkedin_message")) if lead.get("linkedin_message") else None,
                     created_at=lead["created_at"],
                     updated_at=lead["updated_at"]
                 )
@@ -489,4 +509,120 @@ async def discover_leads(payload: DiscoverLeadsRequest):
         print(f"Error in discover_leads: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class GenerateProposalsRequest(BaseModel):
+    lead: CompanyLead
+    company_profile: CompanyProfile
+
+@app.post("/leads/generate-proposals")
+async def generate_lead_proposals(payload: GenerateProposalsRequest):
+    """Generate both email and LinkedIn proposals for a lead."""
+    try:
+        print("Starting proposal generation...")
+        
+        # Generate both proposals concurrently using company profile from request
+        email_task = generate_email_proposal(payload.lead, payload.company_profile.model_dump())
+        linkedin_task = generate_linkedin_message(payload.lead, payload.company_profile.model_dump())
+        
+        # Wait for both tasks to complete
+        email_versions, linkedin_message = await asyncio.gather(email_task, linkedin_task)
+        
+        return {
+            "automation_email": {
+                "formal": email_versions.formal,
+                "informal": email_versions.informal,
+                "semi_formal": email_versions.semi_formal
+            },
+            "linkedin_message": {
+                "formal": linkedin_message.formal,
+                "informal": linkedin_message.informal,
+                "semi_formal": linkedin_message.semi_formal
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/saved-leads/{lead_id}/generate-proposals")
+async def generate_saved_lead_proposals(lead_id: int):
+    """Generate both email and LinkedIn proposals for a saved lead."""
+    try:
+        print(f"Starting proposal generation for saved lead {lead_id}...")
+        
+        with DatabaseManager() as db:
+            lead_manager = LeadManager(db)
+            profile_manager = CompanyProfileManager(db)
+            
+            # Get the lead
+            lead = lead_manager.get_lead_by_id(lead_id)
+            if not lead:
+                raise HTTPException(status_code=404, detail="Lead not found")
+            
+            # Get the company profile
+            profiles = profile_manager.get_all_company_profiles()
+            if not profiles:
+                raise HTTPException(status_code=400, detail="No company profile found. Please save your company profile first.")
+            
+            company_profile = profiles[0]
+            
+            # Create CompanyLead object for the proposal generation
+            company_lead = CompanyLead(
+                company_name=lead["company_name"],
+                website_url=lead.get("website_url", ""),
+                description=lead.get("description", ""),
+                linkedin_info=None,  # We don't store LinkedIn info in saved leads yet
+                lead_reasoning=lead.get("automation_proposal", ""),
+                sector="",  # We don't store sector in saved leads yet
+                location="",  # We don't store location in saved leads yet
+                confidence_score=0.8
+            )
+            
+            # Generate both proposals concurrently
+            email_task = generate_email_proposal(company_lead, company_profile)
+            linkedin_task = generate_linkedin_message(company_lead, company_profile)
+            
+            # Wait for both tasks to complete
+            email_versions, linkedin_message = await asyncio.gather(email_task, linkedin_task)
+            
+            # Convert to dictionaries for storage
+            automation_email = {
+                "formal": email_versions.formal,
+                "informal": email_versions.informal,
+                "semi_formal": email_versions.semi_formal
+            }
+            
+            linkedin_message_dict = {
+                "formal": linkedin_message.formal,
+                "informal": linkedin_message.informal,
+                "semi_formal": linkedin_message.semi_formal
+            }
+            
+            # Update the lead with the generated proposals
+            success = lead_manager.update_lead_proposals(
+                lead_id, 
+                automation_email=automation_email, 
+                linkedin_message=linkedin_message_dict
+            )
+            
+            if not success:
+                raise HTTPException(status_code=500, detail="Failed to save proposals to database")
+            
+            # Get the updated lead to return the new timestamp
+            updated_lead = lead_manager.get_lead_by_id(lead_id)
+            if not updated_lead:
+                raise HTTPException(status_code=500, detail="Failed to retrieve updated lead")
+            
+            return {
+                "automation_email": automation_email,
+                "linkedin_message": linkedin_message_dict,
+                "updated_at": updated_lead["updated_at"]
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import '../styles/prose.css'
 
 function SavedLeadDetails() {
   const { leadId } = useParams()
@@ -9,6 +11,11 @@ function SavedLeadDetails() {
   const [error, setError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [proposalsLoading, setProposalsLoading] = useState(false)
+  const [copiedEmail, setCopiedEmail] = useState({})
+  const [copiedLinkedin, setCopiedLinkedin] = useState({})
+  const [selectedEmailVersion, setSelectedEmailVersion] = useState('formal')
+  const [selectedLinkedinVersion, setSelectedLinkedinVersion] = useState('formal')
   const [formData, setFormData] = useState({
     status: '',
     priority: '',
@@ -86,6 +93,53 @@ function SavedLeadDetails() {
       notes: lead.notes || ''
     })
     setEditing(false)
+  }
+
+  // Function to generate both email and LinkedIn proposals
+  const generateProposals = async () => {
+    if (!lead) return
+    
+    setProposalsLoading(true)
+    try {
+      const response = await fetch(`/api/saved-leads/${leadId}/generate-proposals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `Failed to generate proposals: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setLead(prevLead => ({ 
+        ...prevLead, 
+        automation_email: data.automation_email,
+        linkedin_message: data.linkedin_message,
+        updated_at: data.updated_at
+      }))
+    } catch (err) {
+      console.error('Error generating proposals:', err)
+      setError(err.message)
+    } finally {
+      setProposalsLoading(false)
+    }
+  }
+
+  // Function to copy text to clipboard
+  const copyToClipboard = async (text, type, version = null) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      if (type === 'email') {
+        setCopiedEmail(prev => ({ ...prev, [version]: true }))
+        setTimeout(() => setCopiedEmail(prev => ({ ...prev, [version]: false })), 2000)
+      } else if (type === 'linkedin') {
+        setCopiedLinkedin(prev => ({ ...prev, [version]: true }))
+        setTimeout(() => setCopiedLinkedin(prev => ({ ...prev, [version]: false })), 2000)
+      }
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
   }
 
   if (loading) {
@@ -425,6 +479,163 @@ function SavedLeadDetails() {
               </div>
             )}
 
+            {/* Generate Proposals Section */}
+            <div className="mt-8">
+              <div className="flex justify-start mb-6">
+                <button
+                  onClick={generateProposals}
+                  disabled={proposalsLoading}
+                  className="rounded bg-gradient-to-r from-indigo-600 to-blue-600 text-white px-4 py-2 text-sm font-medium hover:from-indigo-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {proposalsLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                      Generate Messages
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Email Proposal */}
+              <div className="mb-6">
+                <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 19v-8.93a2 2 0 01.89-1.664l7-4.666a2 2 0 012.22 0l7 4.666A2 2 0 0121 10.07V19M3 19a2 2 0 002 2h14a2 2 0 002-2M3 19l6.75-4.5M21 19l-6.75-4.5M3 10l6.75 4.5M21 10l-6.75 4.5m0 0l-1.14.76a2 2 0 01-2.22 0l-1.14-.76" />
+                  </svg>
+                  Email Proposals
+                </h4>
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                  {lead.automation_email ? (
+                    <div>
+                      {/* Email Version Tabs */}
+                      <div className="flex gap-2 mb-4">
+                        <button
+                          onClick={() => setSelectedEmailVersion('formal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedEmailVersion === 'formal'
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white text-indigo-600 hover:bg-indigo-100'
+                          }`}
+                        >
+                          Formal
+                        </button>
+                        <button
+                          onClick={() => setSelectedEmailVersion('semi_formal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedEmailVersion === 'semi_formal'
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white text-indigo-600 hover:bg-indigo-100'
+                          }`}
+                        >
+                          Semi-Formal
+                        </button>
+                        <button
+                          onClick={() => setSelectedEmailVersion('informal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedEmailVersion === 'informal'
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white text-indigo-600 hover:bg-indigo-100'
+                          }`}
+                        >
+                          Informal
+                        </button>
+                      </div>
+                      
+                      {/* Email Content */}
+                      <div className="text-indigo-800 leading-relaxed mb-3 prose prose-indigo max-w-none">
+                        <ReactMarkdown>{lead.automation_email[selectedEmailVersion]}</ReactMarkdown>
+                      </div>
+                      
+                      {/* Copy Button */}
+                      <button
+                        onClick={() => copyToClipboard(lead.automation_email[selectedEmailVersion], 'email', selectedEmailVersion)}
+                        className="text-sm bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 transition-colors"
+                      >
+                        {copiedEmail[selectedEmailVersion] ? 'Copied!' : 'Copy Email'}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 italic">
+                      Click "Generate Messages" to create personalized email proposals
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* LinkedIn Message */}
+              <div>
+                <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                  </svg>
+                  LinkedIn Messages
+                </h4>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  {lead.linkedin_message ? (
+                    <div>
+                      {/* LinkedIn Version Tabs */}
+                      <div className="flex gap-2 mb-4">
+                        <button
+                          onClick={() => setSelectedLinkedinVersion('formal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedLinkedinVersion === 'formal'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-600 hover:bg-blue-100'
+                          }`}
+                        >
+                          Formal
+                        </button>
+                        <button
+                          onClick={() => setSelectedLinkedinVersion('semi_formal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedLinkedinVersion === 'semi_formal'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-600 hover:bg-blue-100'
+                          }`}
+                        >
+                          Semi-Formal
+                        </button>
+                        <button
+                          onClick={() => setSelectedLinkedinVersion('informal')}
+                          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            selectedLinkedinVersion === 'informal'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-600 hover:bg-blue-100'
+                          }`}
+                        >
+                          Informal
+                        </button>
+                      </div>
+                      
+                      {/* LinkedIn Message Content */}
+                      <div className="text-blue-800 leading-relaxed mb-3 prose prose-blue max-w-none">
+                        <ReactMarkdown>{lead.linkedin_message[selectedLinkedinVersion]}</ReactMarkdown>
+                      </div>
+                      
+                      {/* Copy Button */}
+                      <button
+                        onClick={() => copyToClipboard(lead.linkedin_message[selectedLinkedinVersion], 'linkedin', selectedLinkedinVersion)}
+                        className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors"
+                      >
+                        {copiedLinkedin[selectedLinkedinVersion] ? 'Copied!' : 'Copy Message'}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 italic">
+                      Click "Generate Messages" to create personalized LinkedIn messages
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Additional Information */}
             <div className="mt-8">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -441,9 +652,9 @@ function SavedLeadDetails() {
                   </p>
                 </div>
                 <div>
-                  <span className="text-sm font-medium text-gray-500">Saved Date:</span>
+                  <span className="text-sm font-medium text-gray-500">Last Updated:</span>
                   <p className="text-gray-900 mt-1">
-                    {new Date(lead.created_at).toLocaleDateString()}
+                    {new Date(lead.updated_at).toLocaleDateString()}
                   </p>
                 </div>
               </div>

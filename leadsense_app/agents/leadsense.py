@@ -291,11 +291,94 @@ IMPORTANT: You must return a JSON object with this exact structure:
 
 # --- END LEAD SCRAPING AGENT --- #
 
+# --- START EMAIL PROPOSAL AGENT --- #
+class EmailVersions(BaseModel):
+    formal: str = Field(description="A formal, professional email version")
+    informal: str = Field(description="A casual, friendly email version")
+    semi_formal: str = Field(description="A balanced, semi-formal email version")
+
+async def generate_email_proposal(company_lead: CompanyLead, company_profile: dict) -> EmailVersions:
+    INSTRUCTIONS = """You are a business development specialist. Your job is to draft three different versions of a personalized email proposal
+                      for automation and AI integration services to a potential client based on their profile and needs.
+                      Use the company lead information and our company profile to create compelling proposals.
+                      Each email should be concise, highlight how our services can benefit their business, and shouldn't be too long (just a few paragraphs).
+                      
+                      Create three distinct versions:
+                      1. FORMAL: Use formal language, professional tone, traditional business communication style
+                      2. INFORMAL: Use casual, friendly language, conversational tone, more personal approach
+                      3. SEMI-FORMAL: Use balanced language, professional but approachable tone, modern business communication style
+                      
+                      Make sure to take into consideration the special offer from our company profile.
+                      Sign each email as a founder of the company.
+                   """
+    prompt = f"""
+                Company Lead Info: {company_lead}
+                Our Company Profile: {company_profile}
+                Draft three personalized email proposals for automation and AI integration services:
+                1. Formal version - professional and traditional
+                2. Informal version - casual and friendly  
+                3. Semi-formal version - balanced and modern
+                Make sure to take into consideration the special offer from our company profile.
+                Sign each email as a founder of the company.
+             """
+    agent = Agent(
+        name="EmailProposalAgent",
+        instructions=INSTRUCTIONS,
+        model="gpt-4o-mini",
+        output_type=EmailVersions,
+    )
+    
+    result = await Runner.run(agent, prompt)
+    return result.final_output
+
+# --- END EMAIL PROPOSAL AGENT --- #
+
+# --- START LINKEDIN MESSAGE AGENT --- #
+class LinkedInVersions(BaseModel):
+    formal: str = Field(description="A formal, professional LinkedIn message version")
+    informal: str = Field(description="A casual, friendly LinkedIn message version")
+    semi_formal: str = Field(description="A balanced, semi-formal LinkedIn message version")
+
+async def generate_linkedin_message(company_lead: CompanyLead, company_profile: dict) -> LinkedInVersions:
+    INSTRUCTIONS = """You are a professional networking specialist. Your job is to draft three different versions of a personalized LinkedIn message
+                      for connecting with potential clients. Each message should be concise, focused on building a business relationship, and under 300 characters
+                      to fit LinkedIn's connection request limit. Use the company lead information and our company profile to create compelling connection request messages.
+                      
+                      Create three distinct versions:
+                      1. FORMAL: Use formal language, professional tone, traditional business networking style
+                      2. INFORMAL: Use casual, friendly language, conversational tone, more personal approach
+                      3. SEMI-FORMAL: Use balanced language, professional but approachable tone, modern networking style
+                      
+                      Each message should highlight mutual business interests and potential collaboration opportunities.
+                      Sign each message as a founder of the company.
+                   """
+    prompt = f"""
+                Company Lead Info: {company_lead}
+                Our Company Profile: {company_profile}
+                Draft three personalized LinkedIn connection request messages for automation and AI integration services:
+                1. Formal version - professional and traditional
+                2. Informal version - casual and friendly  
+                3. Semi-formal version - balanced and modern
+                Keep each message under 300 characters for LinkedIn's connection request limit.
+                Sign each message as a founder of the company.
+             """
+    agent = Agent(
+        name="LinkedInMessageAgent",
+        instructions=INSTRUCTIONS,
+        model="gpt-4o-mini",
+        output_type=LinkedInVersions,
+    )
+
+    result = await Runner.run(agent, prompt)
+    return result.final_output
+
+# --- END LINKEDIN MESSAGE AGENT --- #
+
 async def main():
-    company_profile = {
-        "company_name": "AutoAI Solutions",
+    company_profile: dict = {
+        "company_name": "IdeaBoost.ai",
         "location": "Zurich, Switzerland",
-        "description": "IdeaBoost offers tailored software solutions including custom dev, AI integration, web/mobile apps, cloud services (AWS), and UI/UX design to support business growth.",
+        "description": "IdeaBoost offers tailored software solutions including custom dev, AI integration, web/mobile apps, cloud services (AWS), and UI/UX design to support business growth. We offer 20 hrs of free consultation to help you get started.",
         "team_size": 5,
         "core_services": ["process automation", "AI integration"],
         "languages": ["English", "German"]

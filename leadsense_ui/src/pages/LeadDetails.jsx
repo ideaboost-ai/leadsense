@@ -32,6 +32,8 @@ function LeadDetails() {
     setLoading(false)
   }, [leadIndex, location.state])
 
+
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -198,6 +200,7 @@ function LeadDetails() {
                 </div>
               </div>
             )}
+
 
             {/* Action Buttons */}
             <div className="mt-8 pt-6 border-t border-gray-200">

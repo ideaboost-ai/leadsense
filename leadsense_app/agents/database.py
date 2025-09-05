@@ -54,6 +54,7 @@ class DatabaseManager:
                 team_size INTEGER NOT NULL,
                 core_services TEXT NOT NULL,  -- JSON array as string
                 languages TEXT NOT NULL,      -- JSON array as string
+                special_offer TEXT,           -- Special offer text
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_active BOOLEAN DEFAULT 1
@@ -77,6 +78,8 @@ class DatabaseManager:
                 status TEXT DEFAULT 'new',
                 priority TEXT DEFAULT 'medium',
                 notes TEXT,
+                automation_email TEXT,  -- JSON string for email proposals
+                linkedin_message TEXT,  -- JSON string for LinkedIn messages
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_active BOOLEAN DEFAULT 1,
@@ -90,6 +93,29 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_discovered_at ON leads(discovered_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_profile_id ON leads(discovered_by_profile_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_active ON leads(is_active)')
+        
+        # Add special_offer column to existing company_profiles table if it doesn't exist
+        try:
+            cursor.execute('ALTER TABLE company_profiles ADD COLUMN special_offer TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+        
+        # Update any NULL special_offer values to empty strings
+        cursor.execute('UPDATE company_profiles SET special_offer = ? WHERE special_offer IS NULL', ('',))
+        
+        # Add automation_email and linkedin_message columns to existing leads table if they don't exist
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN automation_email TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN linkedin_message TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
         
         self.connection.commit()
     
@@ -167,15 +193,16 @@ class CompanyProfileManager:
             cursor = self.db_manager.connection.cursor()
             cursor.execute('''
                 INSERT INTO company_profiles 
-                (company_name, location, description, team_size, core_services, languages)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (company_name, location, description, team_size, core_services, languages, special_offer)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
                 profile['company_name'],
                 profile['location'],
                 profile['description'],
                 profile['team_size'],
                 json.dumps(profile['core_services']),
-                json.dumps(profile['languages'])
+                json.dumps(profile['languages']),
+                profile.get('special_offer', '')
             ))
             profile_id = cursor.lastrowid
             self.db_manager.connection.commit()
@@ -194,6 +221,9 @@ class CompanyProfileManager:
             # Parse JSON arrays back to lists
             profile['core_services'] = json.loads(profile['core_services'])
             profile['languages'] = json.loads(profile['languages'])
+            # Handle NULL special_offer values
+            if profile.get('special_offer') is None:
+                profile['special_offer'] = ''
             return profile
         return None
     
@@ -212,6 +242,9 @@ class CompanyProfileManager:
             # Parse JSON arrays back to lists
             profile['core_services'] = json.loads(profile['core_services'])
             profile['languages'] = json.loads(profile['languages'])
+            # Handle NULL special_offer values
+            if profile.get('special_offer') is None:
+                profile['special_offer'] = ''
             profiles.append(profile)
         return profiles
     
@@ -222,7 +255,7 @@ class CompanyProfileManager:
             cursor.execute('''
                 UPDATE company_profiles 
                 SET company_name = ?, location = ?, description = ?, 
-                    team_size = ?, core_services = ?, languages = ?, 
+                    team_size = ?, core_services = ?, languages = ?, special_offer = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND is_active = 1
             ''', (
@@ -232,6 +265,7 @@ class CompanyProfileManager:
                 profile['team_size'],
                 json.dumps(profile['core_services']),
                 json.dumps(profile['languages']),
+                profile.get('special_offer', ''),
                 profile_id
             ))
             self.db_manager.connection.commit()
@@ -548,6 +582,39 @@ class LeadManager:
             'priority_counts': priority_counts,
             'recent_leads': recent_leads
         }
+    
+    def update_lead_proposals(self, lead_id: int, automation_email: Dict = None, linkedin_message: Dict = None) -> bool:
+        """Update lead proposals (email and LinkedIn messages)."""
+        with self.db_manager._connection_lock:
+            cursor = self.db_manager.connection.cursor()
+            
+            # Build dynamic UPDATE query based on provided fields
+            update_parts = []
+            params = []
+            
+            if automation_email is not None:
+                update_parts.append("automation_email = ?")
+                params.append(json.dumps(automation_email))
+            
+            if linkedin_message is not None:
+                update_parts.append("linkedin_message = ?")
+                params.append(json.dumps(linkedin_message))
+            
+            if not update_parts:
+                return False  # No fields to update
+            
+            update_parts.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(lead_id)
+            
+            query = f'''
+                UPDATE leads 
+                SET {', '.join(update_parts)}
+                WHERE id = ? AND is_active = 1
+            '''
+            
+            cursor.execute(query, params)
+            self.db_manager.connection.commit()
+            return cursor.rowcount > 0
 
 
 def get_or_create_sector(db_manager: DatabaseManager, name: str, description: str = None, 

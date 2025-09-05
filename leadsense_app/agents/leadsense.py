@@ -291,6 +291,56 @@ IMPORTANT: You must return a JSON object with this exact structure:
 
 # --- END LEAD SCRAPING AGENT --- #
 
+# --- START EMAIL PROPOSAL AGENT --- #
+async def generate_email_proposal(company_lead: CompanyLead, company_profile: dict) -> str:
+    INSTRUCTIONS = """You are a business development specialist. Your job is to draft a personalized email proposal
+                      for automation and AI integration services to a potential client based on their profile and needs.
+                      Use the company lead information and our company profile to create a compelling proposal.
+                      The email should be concise, professional, and highlight how our services can benefit their business.
+                      It shouldn't be too long, just a few paragraphs.
+                   """
+    prompt = f"""
+                Company Lead Info: {company_lead}
+                Our Company Profile: {company_profile}
+                Draft a personalized email proposal for automation and AI integration services.
+             """
+    agent = Agent(
+        name="EmailProposalAgent",
+        instructions=INSTRUCTIONS,
+        model="gpt-4o-mini",
+        output_type=str,
+    )
+
+    result = await Runner.run(agent, prompt)
+    return result.final_output
+
+# --- END EMAIL PROPOSAL AGENT --- #
+
+# --- START LINKEDIN MESSAGE AGENT --- #
+async def generate_linkedin_message(company_lead: CompanyLead, company_profile: dict) -> str:
+    INSTRUCTIONS = """You are a professional networking specialist. Your job is to draft a personalized LinkedIn message
+                      for connecting with potential clients. The message should be professional, concise, and focused on
+                      building a business relationship. Use the company lead information and our company profile to create
+                      a compelling connection request message that highlights mutual business interests and potential collaboration.
+                      Keep it under 300 characters to fit LinkedIn's connection request limit.
+                   """
+    prompt = f"""
+                Company Lead Info: {company_lead}
+                Our Company Profile: {company_profile}
+                Draft a personalized LinkedIn connection request message for automation and AI integration services.
+             """
+    agent = Agent(
+        name="LinkedInMessageAgent",
+        instructions=INSTRUCTIONS,
+        model="gpt-4o-mini",
+        output_type=str,
+    )
+
+    result = await Runner.run(agent, prompt)
+    return result.final_output
+
+# --- END LINKEDIN MESSAGE AGENT --- #
+
 async def main():
     company_profile = {
         "company_name": "AutoAI Solutions",

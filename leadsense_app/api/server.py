@@ -5,8 +5,15 @@ from typing import List, Optional
 import asyncio
 import httpx
 
-from ..agents.leadsense import sector_identification_agent, RecomendedSectorList
-from ..agents.leadsense import RecomendedSectorItem, lead_discovery_agent
+from ..agents.leadsense import (
+    sector_identification_agent, 
+    RecomendedSectorList,
+    RecomendedSectorItem, 
+    lead_discovery_agent,
+    CompanyLead,
+    generate_email_proposal,
+    generate_linkedin_message
+)
 from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
 
 
@@ -489,4 +496,31 @@ async def discover_leads(payload: DiscoverLeadsRequest):
         print(f"Error in discover_leads: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class GenerateProposalsRequest(BaseModel):
+    lead: CompanyLead
+    company_profile: CompanyProfile
+
+@app.post("/leads/generate-proposals")
+async def generate_lead_proposals(payload: GenerateProposalsRequest):
+    """Generate both email and LinkedIn proposals for a lead."""
+    try:
+        print("Starting proposal generation...")
+        
+        # Generate both proposals concurrently using company profile from request
+        email_task = generate_email_proposal(payload.lead, payload.company_profile.model_dump())
+        linkedin_task = generate_linkedin_message(payload.lead, payload.company_profile.model_dump())
+        
+        # Wait for both tasks to complete
+        email_proposal, linkedin_message = await asyncio.gather(email_task, linkedin_task)
+        
+        return {
+            "automation_email": email_proposal,
+            "linkedin_message": linkedin_message
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 

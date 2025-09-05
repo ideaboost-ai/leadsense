@@ -12,7 +12,9 @@ from ..agents.leadsense import (
     lead_discovery_agent,
     CompanyLead,
     generate_email_proposal,
-    generate_linkedin_message
+    generate_linkedin_message,
+    EmailVersions,
+    LinkedInVersions
 )
 from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
 
@@ -518,11 +520,19 @@ async def generate_lead_proposals(payload: GenerateProposalsRequest):
         linkedin_task = generate_linkedin_message(payload.lead, payload.company_profile.model_dump())
         
         # Wait for both tasks to complete
-        email_proposal, linkedin_message = await asyncio.gather(email_task, linkedin_task)
+        email_versions, linkedin_message = await asyncio.gather(email_task, linkedin_task)
         
         return {
-            "automation_email": email_proposal,
-            "linkedin_message": linkedin_message
+            "automation_email": {
+                "formal": email_versions.formal,
+                "informal": email_versions.informal,
+                "semi_formal": email_versions.semi_formal
+            },
+            "linkedin_message": {
+                "formal": linkedin_message.formal,
+                "informal": linkedin_message.informal,
+                "semi_formal": linkedin_message.semi_formal
+            }
         }
         
     except HTTPException:

@@ -303,14 +303,16 @@ async def generate_email_proposal(company_lead: CompanyLead, company_profile: di
                 Company Lead Info: {company_lead}
                 Our Company Profile: {company_profile}
                 Draft a personalized email proposal for automation and AI integration services.
+                Make sure to take into consideration the special offer from our company profile.
+                Sign the email as a founder of the company.
              """
     agent = Agent(
         name="EmailProposalAgent",
         instructions=INSTRUCTIONS,
-        model="gpt-4o-mini",
+        model="gpt-4.1",
         output_type=str,
     )
-
+    
     result = await Runner.run(agent, prompt)
     return result.final_output
 
@@ -342,10 +344,10 @@ async def generate_linkedin_message(company_lead: CompanyLead, company_profile: 
 # --- END LINKEDIN MESSAGE AGENT --- #
 
 async def main():
-    company_profile = {
-        "company_name": "AutoAI Solutions",
+    company_profile: dict = {
+        "company_name": "IdeaBoost.ai",
         "location": "Zurich, Switzerland",
-        "description": "IdeaBoost offers tailored software solutions including custom dev, AI integration, web/mobile apps, cloud services (AWS), and UI/UX design to support business growth.",
+        "description": "IdeaBoost offers tailored software solutions including custom dev, AI integration, web/mobile apps, cloud services (AWS), and UI/UX design to support business growth. We offer 20 hrs of free consultation to help you get started.",
         "team_size": 5,
         "core_services": ["process automation", "AI integration"],
         "languages": ["English", "German"]

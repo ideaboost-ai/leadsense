@@ -83,7 +83,8 @@ function LeadDetails() {
             description: companyProfile.description,
             team_size: companyProfile.team_size,
             core_services: companyProfile.core_services,
-            languages: companyProfile.languages
+            languages: companyProfile.languages,
+            special_offer: companyProfile.special_offer || ''
           }
         })
       })

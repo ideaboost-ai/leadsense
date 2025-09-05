@@ -40,6 +40,7 @@ class CompanyProfile(BaseModel):
     team_size: int
     core_services: List[str]
     languages: List[str]
+    special_offer: str = ""
 
 
 class CompanyProfileResponse(BaseModel):
@@ -50,6 +51,7 @@ class CompanyProfileResponse(BaseModel):
     team_size: int
     core_services: List[str]
     languages: List[str]
+    special_offer: str
     created_at: str
     updated_at: str
 
@@ -156,6 +158,7 @@ async def get_company_profiles():
                     team_size=p["team_size"],
                     core_services=p["core_services"],
                     languages=p["languages"],
+                    special_offer=p.get("special_offer", ""),
                     created_at=p["created_at"],
                     updated_at=p["updated_at"]
                 )
@@ -184,6 +187,7 @@ async def get_company_profile(profile_id: int):
                 team_size=profile["team_size"],
                 core_services=profile["core_services"],
                 languages=profile["languages"],
+                special_offer=profile.get("special_offer", ""),
                 created_at=profile["created_at"],
                 updated_at=profile["updated_at"]
             )
@@ -220,6 +224,7 @@ async def update_company_profile(profile_id: int, profile: CompanyProfile):
                 team_size=updated_profile["team_size"],
                 core_services=updated_profile["core_services"],
                 languages=updated_profile["languages"],
+                special_offer=updated_profile.get("special_offer", ""),
                 created_at=updated_profile["created_at"],
                 updated_at=updated_profile["updated_at"]
             )
@@ -247,6 +252,7 @@ async def create_company_profile(profile: CompanyProfile):
                 team_size=created_profile["team_size"],
                 core_services=created_profile["core_services"],
                 languages=created_profile["languages"],
+                special_offer=created_profile.get("special_offer", ""),
                 created_at=created_profile["created_at"],
                 updated_at=created_profile["updated_at"]
             )

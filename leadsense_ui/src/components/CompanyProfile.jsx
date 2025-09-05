@@ -6,7 +6,8 @@ const DEFAULT_PROFILE = {
   description: 'Tailored software solutions including AI integration.',
   team_size: 5,
   core_services: ['process automation', 'AI integration'],
-  languages: ['English', 'German']
+  languages: ['English', 'German'],
+  special_offer: ''
 }
 
 function CompanyProfile({ 
@@ -89,6 +90,16 @@ function CompanyProfile({
               className="w-full rounded border border-gray-300 p-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Special Offer</label>
+            <textarea 
+              value={profile.special_offer || ''}
+              onChange={(e) => onProfileChange({...profile, special_offer: e.target.value})}
+              rows={3}
+              placeholder="Describe any special offers or promotions..."
+              className="w-full rounded border border-gray-300 p-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+          </div>
           <div className="flex gap-2">
             <button 
               onClick={handleSave}
@@ -131,6 +142,12 @@ function CompanyProfile({
             <span className="text-sm font-medium text-gray-500">Languages:</span>
             <p className="text-gray-900">{profile.languages.join(', ')}</p>
           </div>
+          {profile.special_offer && (
+            <div>
+              <span className="text-sm font-medium text-gray-500">Special Offer:</span>
+              <p className="text-gray-900">{profile.special_offer}</p>
+            </div>
+          )}
           <div className="flex gap-2">
             <button 
               onClick={() => setIsEditing(true)}

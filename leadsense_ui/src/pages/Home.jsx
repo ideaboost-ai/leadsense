@@ -35,6 +35,7 @@ function Home() {
 
   // Discovered leads state with localStorage
   const [leads, setLeads] = useLocalStorage('leadsense_leads', [])
+  const [queriesUsed, setQueriesUsed] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [leadsError, setLeadsError] = useState('')
 
@@ -45,6 +46,15 @@ function Home() {
   const [savingLead, setSavingLead] = useState(null)
   const [savedLeadIds, setSavedLeadIds] = useState(new Set())
 
+  // Settings state
+  const [maxQueries, setMaxQueries] = useState(2)
+  const [sectorPrecision, setSectorPrecision] = useState("medium")
+  const [sectorCount, setSectorCount] = useState(1)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+  const [settingsId, setSettingsId] = useState(null)
+
 
   const refreshSectors = async () => {
     setError('')
@@ -53,7 +63,11 @@ function Home() {
       const res = await fetch(`${apiBase}/sectors/identify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(companyProfile)
+        body: JSON.stringify({
+          profile: companyProfile,
+          sector_precision: sectorPrecision,
+          sector_count: sectorCount
+        })
       })
       
 
@@ -227,14 +241,16 @@ function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sectors: selectedSectorNames,
-          profile: companyProfile
+          profile: companyProfile,
+          max_queries: maxQueries
         })
       })
       
       if (!res.ok) throw new Error(`Failed to discover leads: ${res.status}`)
       
       const data = await res.json()
-      setLeads(data)
+      setLeads(data.companies)
+      setQueriesUsed(data.queries_used)
     } catch (e) {
       setLeadsError(e.message || 'Unknown error')
     } finally {
@@ -296,10 +312,60 @@ function Home() {
     })
   }
 
+  const fetchSettings = async () => {
+    setSettingsError('')
+    setSettingsLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/settings`)
+      if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`)
+      const settings = await res.json()
+      
+      setSectorCount(settings.sector_count)
+      setSectorPrecision(settings.sector_precision)
+      setMaxQueries(settings.max_queries)
+      setSettingsId(settings.id)
+    } catch (e) {
+      setSettingsError(e.message || 'Unknown error')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
+  const saveSettings = async () => {
+    if (!profileId) {
+      setSettingsError('Please save your company profile first')
+      return
+    }
+
+    setSettingsError('')
+    setSettingsSaving(true)
+    try {
+      const res = await fetch(`${apiBase}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sector_count: sectorCount,
+          sector_precision: sectorPrecision,
+          max_queries: maxQueries
+        })
+      })
+      
+      if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`)
+      
+      const savedSettings = await res.json()
+      setSettingsId(savedSettings.id)
+    } catch (e) {
+      setSettingsError(e.message || 'Unknown error')
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
   useEffect(() => {
     fetchSectors()
     fetchCompanyProfile()
     fetchSavedLeads()
+    fetchSettings()
   }, [])
 
   const selectedCount = selectedSectors.size
@@ -316,6 +382,7 @@ function Home() {
         {profileError && <div className="mb-4 text-sm text-red-600">{profileError}</div>}
         {leadsError && <div className="mb-4 text-sm text-red-600">{leadsError}</div>}
         {savedLeadsError && <div className="mb-4 text-sm text-red-600">{savedLeadsError}</div>}
+        {settingsError && <div className="mb-4 text-sm text-red-600">{settingsError}</div>}
 
         {/* Company Profile Section */}
         <CollapsibleSection 
@@ -333,6 +400,87 @@ function Home() {
             isRefreshing={profileLoading}
             hasProfileId={!!profileId}
           />
+        </CollapsibleSection>
+
+        {/* Settings Section */}
+        <CollapsibleSection 
+          title="Settings" 
+          badge={settingsId ? "Saved" : "Configuration"}
+          defaultCollapsed={true}
+          className="mb-6"
+        >
+          <div className="p-4 bg-white rounded-lg border">
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="sectorCount" className="block text-sm font-medium text-gray-700 mb-2">
+                  Number of Sectors to Recommend
+                </label>
+                <input
+                  id="sectorCount"
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={sectorCount}
+                  onChange={(e) => setSectorCount(parseInt(e.target.value) || 1)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Number of sectors the AI should recommend (1-5)
+                </p>
+              </div>
+              <div>
+                <label htmlFor="sectorPrecision" className="block text-sm font-medium text-gray-700 mb-2">
+                  Sector Precision Level
+                </label>
+                <select
+                  id="sectorPrecision"
+                  value={sectorPrecision}
+                  onChange={(e) => setSectorPrecision(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="general">General - Broad industries (e.g., healthcare, logistics)</option>
+                  <option value="medium">Medium - Sub-sectors (e.g., dental clinics, local logistics)</option>
+                  <option value="precise">Precise - Specific niches (e.g., family-owned dental clinics in Zurich)</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Controls how specific the sector recommendations will be
+                </p>
+              </div>
+              <div>
+                <label htmlFor="maxQueries" className="block text-sm font-medium text-gray-700 mb-2">
+                  Maximum Queries per Sector
+                </label>
+                <input
+                  id="maxQueries"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={maxQueries}
+                  onChange={(e) => setMaxQueries(parseInt(e.target.value) || 1)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Number of search queries to generate for each selected sector (1-10)
+                </p>
+              </div>
+              
+              {/* Save Settings Button */}
+              <div className="pt-4 border-t border-gray-200">
+                <button 
+                  onClick={saveSettings}
+                  disabled={!profileId || settingsSaving}
+                  className="rounded bg-blue-600 text-white px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {settingsSaving ? 'Saving Settings...' : 'Save Settings'}
+                </button>
+                {settingsId && (
+                  <span className="ml-3 text-sm text-green-600">
+                    Settings saved successfully
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
         </CollapsibleSection>
 
         {/* Sectors Section */}
@@ -369,6 +517,30 @@ function Home() {
           defaultCollapsed={false}
           className="mb-6"
         >
+          {/* Queries Used Section */}
+          {queriesUsed.length > 0 && (
+            <CollapsibleSection 
+              title="Search Queries Used" 
+              badge={`${queriesUsed.length} queries`}
+              defaultCollapsed={true}
+              className="mb-4"
+            >
+              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-sm text-blue-800 mb-3">
+                  The following search queries were used to discover the leads below:
+                </p>
+                <ul className="space-y-2">
+                  {queriesUsed.map((query, index) => (
+                    <li key={index} className="text-sm text-blue-700">
+                      <span className="font-medium">{query.sector}</span> ({query.language}): 
+                      <span className="ml-1 italic">"{query.query}"</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </CollapsibleSection>
+          )}
+          
           <LeadsTable
             leads={leads}
             onLeadClick={handleLeadClick}

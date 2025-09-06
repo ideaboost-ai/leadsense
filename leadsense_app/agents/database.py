@@ -80,10 +80,31 @@ class DatabaseManager:
                 notes TEXT,
                 automation_email TEXT,  -- JSON string for email proposals
                 linkedin_message TEXT,  -- JSON string for LinkedIn messages
+                company_type TEXT,  -- "Startup" | "SME" | "Larger company"
+                sector TEXT,  -- Business sector
+                location TEXT,  -- Geographic location
+                pain_points TEXT,  -- JSON array of pain points
+                proposed_solution TEXT,  -- Tailored solution proposal
+                confidence_score REAL DEFAULT 0.5,  -- Lead confidence score 0-1
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_active BOOLEAN DEFAULT 1,
                 FOREIGN KEY (discovered_by_profile_id) REFERENCES company_profiles(id)
+            )
+        ''')
+        
+        # Create settings table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id INTEGER NOT NULL,
+                sector_count INTEGER DEFAULT 1,
+                sector_precision TEXT DEFAULT 'medium',
+                max_queries INTEGER DEFAULT 2,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (profile_id) REFERENCES company_profiles(id)
             )
         ''')
         
@@ -93,6 +114,8 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_discovered_at ON leads(discovered_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_profile_id ON leads(discovered_by_profile_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_active ON leads(is_active)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_settings_profile_id ON settings(profile_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_settings_active ON settings(is_active)')
         
         # Add special_offer column to existing company_profiles table if it doesn't exist
         try:
@@ -113,6 +136,43 @@ class DatabaseManager:
             
         try:
             cursor.execute('ALTER TABLE leads ADD COLUMN linkedin_message TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+        
+        # Add new lead fields to existing leads table if they don't exist
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN company_type TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN sector TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN location TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN pain_points TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN proposed_solution TEXT')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore the error
+            pass
+            
+        try:
+            cursor.execute('ALTER TABLE leads ADD COLUMN confidence_score REAL DEFAULT 0.5')
         except sqlite3.OperationalError:
             # Column already exists, ignore the error
             pass
@@ -297,8 +357,9 @@ class LeadManager:
             cursor.execute('''
                 INSERT INTO leads 
                 (company_name, website_url, address, contact_email, phone_number, 
-                 description, automation_proposal, discovered_by_profile_id, discovered_sectors)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 description, automation_proposal, discovered_by_profile_id, discovered_sectors,
+                 company_type, sector, location, pain_points, proposed_solution, confidence_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lead.get('company_name', ''),
                 lead.get('website_url'),
@@ -308,11 +369,17 @@ class LeadManager:
                 lead.get('description'),
                 lead.get('automation_proposal'),
                 discovered_by_profile_id,
-                json.dumps(discovered_sectors) if discovered_sectors else None
+                json.dumps(discovered_sectors) if discovered_sectors else None,
+                lead.get('company_type'),
+                lead.get('sector'),
+                lead.get('location'),
+                json.dumps(lead.get('pain_points', [])) if lead.get('pain_points') else None,
+                lead.get('proposed_solution'),
+                lead.get('confidence_score', 0.5)
             ))
             lead_id = cursor.lastrowid
             self.db_manager.connection.commit()
-            return lead_id
+        return lead_id
     
     def add_leads_batch(self, leads: List[Dict], discovered_by_profile_id: int = None, discovered_sectors: List[str] = None) -> List[int]:
         """Add multiple leads to the database."""
@@ -323,8 +390,9 @@ class LeadManager:
                 cursor.execute('''
                     INSERT INTO leads 
                     (company_name, website_url, address, contact_email, phone_number, 
-                     description, automation_proposal, discovered_by_profile_id, discovered_sectors)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     description, automation_proposal, discovered_by_profile_id, discovered_sectors,
+                     company_type, sector, location, pain_points, proposed_solution, confidence_score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     lead.get('company_name', ''),
                     lead.get('website_url'),
@@ -334,7 +402,13 @@ class LeadManager:
                     lead.get('description'),
                     lead.get('automation_proposal'),
                     discovered_by_profile_id,
-                    json.dumps(discovered_sectors) if discovered_sectors else None
+                    json.dumps(discovered_sectors) if discovered_sectors else None,
+                    lead.get('company_type'),
+                    lead.get('sector'),
+                    lead.get('location'),
+                    json.dumps(lead.get('pain_points', [])) if lead.get('pain_points') else None,
+                    lead.get('proposed_solution'),
+                    lead.get('confidence_score', 0.5)
                 ))
                 lead_ids.append(cursor.lastrowid)
             self.db_manager.connection.commit()
@@ -353,6 +427,8 @@ class LeadManager:
             # Parse JSON arrays back to lists
             if lead.get('discovered_sectors'):
                 lead['discovered_sectors'] = json.loads(lead['discovered_sectors'])
+            if lead.get('pain_points'):
+                lead['pain_points'] = json.loads(lead['pain_points'])
             return lead
         return None
     
@@ -371,6 +447,8 @@ class LeadManager:
             # Parse JSON arrays back to lists
             if lead.get('discovered_sectors'):
                 lead['discovered_sectors'] = json.loads(lead['discovered_sectors'])
+            if lead.get('pain_points'):
+                lead['pain_points'] = json.loads(lead['pain_points'])
             leads.append(lead)
         return leads
     
@@ -389,6 +467,8 @@ class LeadManager:
             # Parse JSON arrays back to lists
             if lead.get('discovered_sectors'):
                 lead['discovered_sectors'] = json.loads(lead['discovered_sectors'])
+            if lead.get('pain_points'):
+                lead['pain_points'] = json.loads(lead['pain_points'])
             leads.append(lead)
         return leads
     
@@ -427,6 +507,8 @@ class LeadManager:
             # Parse JSON arrays back to lists
             if lead.get('discovered_sectors'):
                 lead['discovered_sectors'] = json.loads(lead['discovered_sectors'])
+            if lead.get('pain_points'):
+                lead['pain_points'] = json.loads(lead['pain_points'])
             leads.append(lead)
         return leads
     
@@ -615,6 +697,84 @@ class LeadManager:
             cursor.execute(query, params)
             self.db_manager.connection.commit()
             return cursor.rowcount > 0
+
+
+class SettingsManager:
+    """Manages settings-related database operations."""
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db_manager = db_manager
+    
+    def add_settings(self, profile_id: int, sector_count: int = 1, sector_precision: str = "medium", max_queries: int = 2) -> int:
+        """Add new settings for a profile."""
+        with self.db_manager._connection_lock:
+            cursor = self.db_manager.connection.cursor()
+            cursor.execute('''
+                INSERT INTO settings (profile_id, sector_count, sector_precision, max_queries)
+                VALUES (?, ?, ?, ?)
+            ''', (profile_id, sector_count, sector_precision, max_queries))
+            self.db_manager.connection.commit()
+            return cursor.lastrowid
+    
+    def get_settings_by_profile_id(self, profile_id: int) -> Optional[Dict]:
+        """Get settings for a specific profile."""
+        cursor = self.db_manager.connection.cursor()
+        cursor.execute('''
+            SELECT * FROM settings 
+            WHERE profile_id = ? AND is_active = 1
+            ORDER BY updated_at DESC
+            LIMIT 1
+        ''', (profile_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
+    def update_settings(self, profile_id: int, sector_count: int = None, sector_precision: str = None, max_queries: int = None) -> bool:
+        """Update settings for a profile."""
+        with self.db_manager._connection_lock:
+            cursor = self.db_manager.connection.cursor()
+            
+            # Build dynamic update query
+            updates = []
+            params = []
+            
+            if sector_count is not None:
+                updates.append("sector_count = ?")
+                params.append(sector_count)
+            
+            if sector_precision is not None:
+                updates.append("sector_precision = ?")
+                params.append(sector_precision)
+            
+            if max_queries is not None:
+                updates.append("max_queries = ?")
+                params.append(max_queries)
+            
+            if not updates:
+                return False
+            
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(profile_id)
+            
+            query = f'''
+                UPDATE settings 
+                SET {', '.join(updates)}
+                WHERE profile_id = ? AND is_active = 1
+            '''
+            
+            cursor.execute(query, params)
+            self.db_manager.connection.commit()
+            return cursor.rowcount > 0
+    
+    def get_or_create_settings(self, profile_id: int, sector_count: int = 1, sector_precision: str = "medium", max_queries: int = 2) -> Dict:
+        """Get existing settings or create new ones if they don't exist."""
+        settings = self.get_settings_by_profile_id(profile_id)
+        
+        if settings:
+            return settings
+        
+        # Create new settings
+        settings_id = self.add_settings(profile_id, sector_count, sector_precision, max_queries)
+        return self.get_settings_by_profile_id(profile_id)
 
 
 def get_or_create_sector(db_manager: DatabaseManager, name: str, description: str = None, 

@@ -146,6 +146,33 @@ function LeadDetails() {
                   Company Details
                 </h3>
                 <div className="space-y-3">
+                  {lead.company_type && (
+                    <div>
+                      <span className="text-sm font-medium text-gray-500">Company Type:</span>
+                      <div>
+                        <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${
+                          lead.company_type === 'Startup' ? 'bg-green-100 text-green-800' :
+                          lead.company_type === 'SME' ? 'bg-blue-100 text-blue-800' :
+                          lead.company_type === 'Larger company' ? 'bg-purple-100 text-purple-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {lead.company_type}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {lead.sector && (
+                    <div>
+                      <span className="text-sm font-medium text-gray-500">Sector:</span>
+                      <p className="text-gray-900">{lead.sector}</p>
+                    </div>
+                  )}
+                  {lead.location && (
+                    <div>
+                      <span className="text-sm font-medium text-gray-500">Location:</span>
+                      <p className="text-gray-900">{lead.location}</p>
+                    </div>
+                  )}
                   {lead.address && (
                     <div>
                       <span className="text-sm font-medium text-gray-500">Address:</span>
@@ -164,6 +191,26 @@ function LeadDetails() {
                         >
                           {lead.website_url}
                         </a>
+                      </div>
+                    </div>
+                  )}
+                  {lead.confidence_score && (
+                    <div>
+                      <span className="text-sm font-medium text-gray-500">Lead Confidence:</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full ${
+                              lead.confidence_score >= 0.8 ? 'bg-green-500' :
+                              lead.confidence_score >= 0.6 ? 'bg-yellow-500' :
+                              'bg-red-500'
+                            }`}
+                            style={{ width: `${lead.confidence_score * 100}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-sm text-gray-600">
+                          {Math.round(lead.confidence_score * 100)}%
+                        </span>
                       </div>
                     </div>
                   )}
@@ -186,6 +233,43 @@ function LeadDetails() {
               </div>
             )}
 
+            {/* Pain Points */}
+            {lead.pain_points && lead.pain_points.length > 0 && (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 18.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  Identified Pain Points
+                </h3>
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <ul className="space-y-2">
+                    {lead.pain_points.map((point, index) => (
+                      <li key={index} className="flex items-start gap-2">
+                        <span className="text-red-500 mt-1">•</span>
+                        <span className="text-red-800">{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* Proposed Solution */}
+            {lead.proposed_solution && (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  Proposed Solution
+                </h3>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-green-800 leading-relaxed">{lead.proposed_solution}</p>
+                </div>
+              </div>
+            )}
+
             {/* Automation Proposal */}
             {lead.automation_proposal && (
               <div className="mt-8">
@@ -193,7 +277,7 @@ function LeadDetails() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                   </svg>
-                  Automation Proposal
+                  Lead Reasoning
                 </h3>
                 <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                   <p className="text-indigo-800 leading-relaxed">{lead.automation_proposal}</p>

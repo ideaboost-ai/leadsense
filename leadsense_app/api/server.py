@@ -17,7 +17,7 @@ from ..agents.leadsense import (
     EmailVersions,
     LinkedInVersions
 )
-from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, get_or_create_sector
+from ..agents.database import DatabaseManager, SectorManager, CompanyProfileManager, LeadManager, SettingsManager, get_or_create_sector
 
 
 app = FastAPI(title="Leadsense API", version="0.1.0")
@@ -83,6 +83,12 @@ class LeadResponseItem(BaseModel):
     notes: Optional[str] = None
     automation_email: Optional[Dict] = None
     linkedin_message: Optional[Dict] = None
+    company_type: Optional[str] = None
+    sector: Optional[str] = None
+    location: Optional[str] = None
+    pain_points: Optional[List[str]] = None
+    proposed_solution: Optional[str] = None
+    confidence_score: Optional[float] = None
     created_at: str
     updated_at: str
 
@@ -98,11 +104,17 @@ class UpdateLeadRequest(BaseModel):
     notes: str = ""
 
 
+class IdentifySectorsRequest(BaseModel):
+    profile: CompanyProfile
+    sector_precision: str = "medium"  # Default to medium precision
+    sector_count: int = 1  # Default to 1 sector
+
+
 @app.post("/sectors/identify", response_model=List[SectorResponseItem])
-async def identify_sectors(profile: CompanyProfile):
+async def identify_sectors(payload: IdentifySectorsRequest):
     try:
         # Run the agent to identify recommended sectors
-        recomended: RecomendedSectorList = await sector_identification_agent(profile.model_dump())
+        recomended: RecomendedSectorList = await sector_identification_agent(payload.profile.model_dump(), payload.sector_precision, payload.sector_count)
 
         # Persist or fetch from DB, then return the list
         created_or_existing: List[SectorResponseItem] = []
@@ -290,6 +302,12 @@ async def get_saved_leads():
                     notes=lead.get("notes"),
                     automation_email=json.loads(lead.get("automation_email")) if lead.get("automation_email") else None,
                     linkedin_message=json.loads(lead.get("linkedin_message")) if lead.get("linkedin_message") else None,
+                    company_type=lead.get("company_type"),
+                    sector=lead.get("sector"),
+                    location=lead.get("location"),
+                    pain_points=lead.get("pain_points"),
+                    proposed_solution=lead.get("proposed_solution"),
+                    confidence_score=lead.get("confidence_score"),
                     created_at=lead["created_at"],
                     updated_at=lead["updated_at"]
                 )
@@ -375,6 +393,12 @@ async def save_lead(payload: SaveLeadRequest):
                 status=saved_lead["status"],
                 priority=saved_lead["priority"],
                 notes=saved_lead.get("notes"),
+                company_type=saved_lead.get("company_type"),
+                sector=saved_lead.get("sector"),
+                location=saved_lead.get("location"),
+                pain_points=saved_lead.get("pain_points"),
+                proposed_solution=saved_lead.get("proposed_solution"),
+                confidence_score=saved_lead.get("confidence_score"),
                 created_at=saved_lead["created_at"],
                 updated_at=saved_lead["updated_at"]
             )
@@ -451,6 +475,12 @@ async def update_lead(lead_id: int, payload: UpdateLeadRequest):
                 status=updated_lead["status"],
                 priority=updated_lead["priority"],
                 notes=updated_lead.get("notes"),
+                company_type=updated_lead.get("company_type"),
+                sector=updated_lead.get("sector"),
+                location=updated_lead.get("location"),
+                pain_points=updated_lead.get("pain_points"),
+                proposed_solution=updated_lead.get("proposed_solution"),
+                confidence_score=updated_lead.get("confidence_score"),
                 created_at=updated_lead["created_at"],
                 updated_at=updated_lead["updated_at"]
             )
@@ -463,9 +493,32 @@ async def update_lead(lead_id: int, payload: UpdateLeadRequest):
 class DiscoverLeadsRequest(BaseModel):
     sectors: List[str]
     profile: CompanyProfile
+    max_queries: int = 2  # Default to 2 queries per sector
+    sector_precision: str = "medium"  # Default to medium precision
 
 
-@app.post("/leads/discover", response_model=List[dict])
+class DiscoverLeadsResponse(BaseModel):
+    companies: List[dict]
+    queries_used: List[dict]
+
+
+class Settings(BaseModel):
+    sector_count: int = 1
+    sector_precision: str = "medium"
+    max_queries: int = 2
+
+
+class SettingsResponse(BaseModel):
+    id: int
+    profile_id: int
+    sector_count: int
+    sector_precision: str
+    max_queries: int
+    created_at: str
+    updated_at: str
+
+
+@app.post("/leads/discover", response_model=DiscoverLeadsResponse)
 async def discover_leads(payload: DiscoverLeadsRequest):
     try:
         # Build RecomendedSectorList from provided sector names
@@ -477,7 +530,7 @@ async def discover_leads(payload: DiscoverLeadsRequest):
 
         # Run lead discovery to get search queries
         print("Starting lead discovery...")
-        discovery_output = await lead_discovery_agent(sector_list, payload.profile.model_dump())
+        discovery_output = await lead_discovery_agent(sector_list, payload.profile.model_dump(), payload.max_queries)
 
         # Run lead scraping agent to get structured leads
         print("Starting lead scraping...")
@@ -496,14 +549,31 @@ async def discover_leads(payload: DiscoverLeadsRequest):
                 "description": lead.description,
                 "automation_proposal": lead.lead_reasoning,  # Use lead reasoning as automation proposal
                 "linkedin_info": lead.linkedin_info,
+                "company_type": lead.company_type,
                 "sector": lead.sector,
                 "location": lead.location,
+                "pain_points": lead.pain_points,
+                "proposed_solution": lead.proposed_solution,
                 "confidence_score": lead.confidence_score
             }
             companies.append(company_data)
         
+        # Prepare queries information for display
+        queries_used = []
+        for search_item in discovery_output.searches:
+            for query in search_item.queries:
+                queries_used.append({
+                    "sector": search_item.sector,
+                    "language": query.language,
+                    "query": query.query,
+                    "order": query.order
+                })
+        
         print(f"Found {len(companies)} companies through lead scraping")
-        return companies
+        return DiscoverLeadsResponse(
+            companies=companies,
+            queries_used=queries_used
+        )
         
     except Exception as e:
         print(f"Error in discover_leads: {str(e)}")
@@ -574,10 +644,13 @@ async def generate_saved_lead_proposals(lead_id: int):
                 website_url=lead.get("website_url", ""),
                 description=lead.get("description", ""),
                 linkedin_info=None,  # We don't store LinkedIn info in saved leads yet
+                company_type=lead.get("company_type", ""),
+                sector=lead.get("sector", ""),
+                location=lead.get("location", ""),
+                pain_points=lead.get("pain_points", []),
+                proposed_solution=lead.get("proposed_solution", ""),
                 lead_reasoning=lead.get("automation_proposal", ""),
-                sector="",  # We don't store sector in saved leads yet
-                location="",  # We don't store location in saved leads yet
-                confidence_score=0.8
+                confidence_score=lead.get("confidence_score", 0.8)
             )
             
             # Generate both proposals concurrently
@@ -621,6 +694,85 @@ async def generate_saved_lead_proposals(lead_id: int):
                 "updated_at": updated_lead["updated_at"]
             }
         
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/settings", response_model=SettingsResponse)
+async def get_settings():
+    """Get settings for the current company profile."""
+    try:
+        with DatabaseManager() as db:
+            settings_manager = SettingsManager(db)
+            profile_manager = CompanyProfileManager(db)
+            
+            # Get the current company profile
+            profiles = profile_manager.get_all_company_profiles()
+            if not profiles:
+                raise HTTPException(status_code=400, detail="No company profile found. Please save your company profile first.")
+            
+            profile_id = profiles[0]["id"]
+            
+            # Get or create settings for this profile
+            settings = settings_manager.get_or_create_settings(profile_id)
+            
+            return SettingsResponse(
+                id=settings["id"],
+                profile_id=settings["profile_id"],
+                sector_count=settings["sector_count"],
+                sector_precision=settings["sector_precision"],
+                max_queries=settings["max_queries"],
+                created_at=settings["created_at"],
+                updated_at=settings["updated_at"]
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/settings", response_model=SettingsResponse)
+async def update_settings(settings: Settings):
+    """Update settings for the current company profile."""
+    try:
+        with DatabaseManager() as db:
+            settings_manager = SettingsManager(db)
+            profile_manager = CompanyProfileManager(db)
+            
+            # Get the current company profile
+            profiles = profile_manager.get_all_company_profiles()
+            if not profiles:
+                raise HTTPException(status_code=400, detail="No company profile found. Please save your company profile first.")
+            
+            profile_id = profiles[0]["id"]
+            
+            # Update settings
+            success = settings_manager.update_settings(
+                profile_id=profile_id,
+                sector_count=settings.sector_count,
+                sector_precision=settings.sector_precision,
+                max_queries=settings.max_queries
+            )
+            
+            if not success:
+                raise HTTPException(status_code=500, detail="Failed to update settings")
+            
+            # Get the updated settings
+            updated_settings = settings_manager.get_settings_by_profile_id(profile_id)
+            if not updated_settings:
+                raise HTTPException(status_code=500, detail="Failed to retrieve updated settings")
+            
+            return SettingsResponse(
+                id=updated_settings["id"],
+                profile_id=updated_settings["profile_id"],
+                sector_count=updated_settings["sector_count"],
+                sector_precision=updated_settings["sector_precision"],
+                max_queries=updated_settings["max_queries"],
+                created_at=updated_settings["created_at"],
+                updated_at=updated_settings["updated_at"]
+            )
     except HTTPException:
         raise
     except Exception as e:

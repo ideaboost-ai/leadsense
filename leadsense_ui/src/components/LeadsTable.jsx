@@ -34,6 +34,9 @@ function LeadsTable({ leads, onLeadClick, onSaveLead, savedLeadIds = new Set(), 
               Company
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Type
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Website
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -43,7 +46,10 @@ function LeadsTable({ leads, onLeadClick, onSaveLead, savedLeadIds = new Set(), 
               Description
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Automation Proposal
+              Pain Points
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Proposed Solution
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Actions
@@ -70,6 +76,16 @@ function LeadsTable({ leads, onLeadClick, onSaveLead, savedLeadIds = new Set(), 
                       {truncateText(lead.address, 20)}
                     </div>
                   )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                    lead.company_type === 'Startup' ? 'bg-green-100 text-green-800' :
+                    lead.company_type === 'SME' ? 'bg-blue-100 text-blue-800' :
+                    lead.company_type === 'Larger company' ? 'bg-purple-100 text-purple-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {lead.company_type || 'N/A'}
+                  </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {lead.website_url ? (
@@ -119,7 +135,23 @@ function LeadsTable({ leads, onLeadClick, onSaveLead, savedLeadIds = new Set(), 
                 </td>
                 <td className="px-6 py-4">
                   <div className="text-sm text-gray-900 max-w-xs">
-                    {lead.automation_proposal || 'No proposal available'}
+                    {lead.pain_points && lead.pain_points.length > 0 ? (
+                      <ul className="list-disc list-inside space-y-1">
+                        {lead.pain_points.slice(0, 2).map((point, idx) => (
+                          <li key={idx} className="text-xs">{truncateText(point, 40)}</li>
+                        ))}
+                        {lead.pain_points.length > 2 && (
+                          <li className="text-xs text-gray-500">+{lead.pain_points.length - 2} more</li>
+                        )}
+                      </ul>
+                    ) : (
+                      <span className="text-gray-400 text-sm">No pain points identified</span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="text-sm text-gray-900 max-w-xs">
+                    {lead.proposed_solution || 'No solution proposed'}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">

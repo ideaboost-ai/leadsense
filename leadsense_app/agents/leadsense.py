@@ -23,17 +23,29 @@ class RecomendedSectorList(BaseModel):
     recomended_sectors: list [RecomendedSectorItem] = Field(description="A list of recomended sectors") 
 
     def concatenate_sectors(self) -> str:
-        return ", ".join(item.name for item in self.recomended_sectors)
+        return ", ".join(f"{item.name} ({item.justification})" for item in self.recomended_sectors)
 
-async def sector_identification_agent(company_profile: dict) -> RecomendedSectorList:
-    print("Identifing sectors...")
-    INSTRUCTIONS = """You are a business development expert helping a small AI company
-                       identify the most promising business sectors to target for automation and AI integration.
-                       Given the company profile, recommend 1 sectors or niches the company should target. 
-                       For each recommendation, include a short justification for why this sector is a good 
-                       fit based on the company's size, location, and services. Please be creative and think
-                       outside the box.
-                    """
+async def sector_identification_agent(company_profile: dict, precision: str = "medium", sector_count: int = 1) -> RecomendedSectorList:
+    print("Identifying sectors...")
+
+    INSTRUCTIONS = f"""
+    You are a business development expert helping a small AI company
+    identify the most promising business sectors to target for automation and AI integration.
+    Given the company profile, recommend {sector_count} sector(s) or niche(s) the company should target. 
+    For each recommendation, include a short justification for why this sector is a good fit 
+    based on the company's size, location, and services.
+
+    Precision level: {precision}
+
+    - If precision = "general", suggest broad industries (e.g., healthcare, logistics, retail).
+    - If precision = "medium", suggest sub-sectors or specific business types (e.g., dental clinics, 
+      local logistics providers, independent retailers).
+    - If precision = "precise", suggest very specific niches and local business categories 
+      (e.g., family-owned dental clinics in Zurich, independent organic food stores in Switzerland).
+
+    Be creative and think outside the box.
+    """
+
     agent = Agent(
         name="SectorIdentificationAgent",
         instructions=INSTRUCTIONS,
@@ -65,15 +77,27 @@ class LeadDiscoveryOutput(BaseModel):
             for query in item.queries
         )
 
-async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company_profile: dict) -> LeadDiscoveryOutput:    
+async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company_profile: dict, max_queries: int = 2) -> LeadDiscoveryOutput:
     print("Generate queries...")
-    INSTRUCTIONS = """You are a lead generation assistant. Your job is to create intelligent web 
-                      search queries that can help find small businesses in a specific sector.
-                      For each sector, generate 1 search queries in both English and German that 
-                      can help discover potential leads (e.g., small companies, service providers).  
-                      Order them by relevance to the company profile. Prioritize local leads, small companies
-                      and startups without dedicated IT departments.
-                    """
+    INSTRUCTIONS = f"""
+    You are a lead generation assistant. Your job is to create intelligent web search
+    queries that can help find small and medium-sized businesses in specific sectors
+    who could benefit from AI or process automation, but are not specialized in AI themselves.
+
+    Guidelines:
+    - For each sector, generate up to {max_queries} search queries in both English and German.
+    - Focus on finding companies that are traditional, service-oriented, or startup-level
+    (e.g., clinics, law firms, logistics providers, construction companies,
+    retail, hospitality, real estate agencies).
+    - Prioritize local leads near Zurich, Switzerland and in the DACH region.
+    - EXCLUDE queries that would return AI companies, IT consultancies, or software vendors.
+    - Frame queries to discover companies that likely don't have strong in-house IT departments
+    but could benefit from automation, AI integration, or digital product development.
+    - Emphasize phrases like "local businesses", "SMEs", "service providers",
+    "family-owned companies", or "small firms".
+    - When relevant, use negative query operators like "-AI -IT -consulting" to avoid competitors.
+    - Order queries by their potential relevance to our company profile.
+    """
 
     agent = Agent(
         name="LeadDiscoveryAgent",
@@ -83,11 +107,20 @@ async def lead_discovery_agent(recomended_sectors: RecomendedSectorList, company
     )
 
     result = await Runner.run(agent, f"""
-                        Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}.
-                        Company profile: {company_profile}. 
-                        Make sure queries are created with the cosideration of company location to 
-                        target local leads.
-                        Pick top 2 relevant sectors to generate queries for.""")
+    Sectors to generate queries for:\n{recomended_sectors.concatenate_sectors()}.
+
+    Company profile: {company_profile}.
+
+    Target audience clarification:
+    - We are NOT looking for AI companies or IT consultancies.
+    - We are looking for traditional businesses (e.g. healthcare, logistics, retail, legal, finance,
+    construction, hospitality, manufacturing) that may need digital transformation, process automation,
+    or AI adoption.
+    - Prioritize SMBs and startups without big IT teams.
+    - Location priority: Zurich, Switzerland and DACH region.
+
+    Pick the top 2 relevant sectors to generate queries for.
+    """)
     return result.final_output
 # --- END LEAD DISCOVERY AGENT --- #
 
@@ -112,9 +145,12 @@ class CompanyLead(BaseModel):
     website_url: str
     description: str
     linkedin_info: Optional[dict] = None
-    lead_reasoning: str
+    company_type: str  # "Startup" | "SME" | "Larger company"
     sector: str
     location: str
+    pain_points: list[str] = []
+    proposed_solution: str
+    lead_reasoning: str
     confidence_score: float  # 0-1
 
 class LeadScrapingResults(BaseModel):
@@ -131,36 +167,49 @@ async def run_lead_scraping_agent(search_queries: LeadDiscoveryOutput, tool_map,
     """
     INSTRUCTIONS = """You are a lead research specialist. Your job is to:
 
-1. **Search for companies** using the provided queries
-2. **Analyze search results** to identify individual companies vs aggregator pages
-3. **Scrape company pages** to extract detailed information
-4. **Extract LinkedIn data** for each company using the extract_company_linkedin_profile tool
-5. **Evaluate lead quality** based on our company profile and provide reasoning
-6. **Return structured data** with company details and lead reasoning
+    1. Use the provided tools to gather raw company data:
+    - **google_search** to find websites
+    - **scrape_website** to extract company info
+    - **extract_company_linkedin_profile** for LinkedIn data
+    2. Analyze search results:
+    - If the page is an **aggregator/listing** (e.g., "Top 10 logistics firms in Zurich"), 
+        extract individual company names and websites from it.
+    - For each listed company, attempt to visit their official website and enrich data with scrape + LinkedIn.
+    - If the page is a **single company site**, extract detailed info directly.
+    3. Extract as much factual detail as possible: employee size, industry, founding year, services, HQ location, etc.
+    4. Based on this, classify the company:
+    - Startup
+    - SME
+    - Larger company
+    If not explicit, infer from scraped details and explain reasoning.
+    5. Identify potential **pain points** (e.g., outdated IT, manual processes, need for automation).
+    6. Suggest a **tailored proposal** for how our company could help, using our profile.
+    7. Always explain your reasoning and confidence.
+    8. Before finishing, always use the **reflection** tool to validate the research and confirm readiness.
 
-For aggregator pages (like "Top 10 companies in Zurich"), extract multiple companies.
-For single company pages, extract detailed information about that company.
-
-Always use reflection before finalizing results to ensure comprehensive research.
-
-IMPORTANT: You must return a JSON object with this exact structure:
-{
-    "leads": [
-        {
-            "company_name": "Company Name",
-            "website_url": "https://company.com",
-            "description": "Company description",
-            "linkedin_info": {"data": "from linkedin"},
-            "lead_reasoning": "Why this is a good lead",
-            "sector": "Financial Services",
-            "location": "Zurich, Switzerland",
-            "confidence_score": 0.85
-        }
-    ],
-    "total_searched": 10,
-    "total_found": 5,
-    "sectors_covered": ["Financial Services", "Healthcare"]
-}"""
+    IMPORTANT: Return JSON in this exact structure:
+    {
+        "leads": [
+            {
+                "company_name": "Company Name",
+                "website_url": "https://company.com",
+                "description": "Short company description",
+                "linkedin_info": {"data": "from linkedin"},
+                "company_type": "Startup | SME | Larger company",
+                "sector": "Sector",
+                "location": "City, Country",
+                "pain_points": ["Pain point 1", "Pain point 2"],
+                "proposed_solution": "Tailored proposal based on company profile",
+                "lead_reasoning": "Why this is a good lead + reasoning for classification",
+                "confidence_score": 0.85
+            }
+        ],
+        "total_searched": 10,
+        "total_found": 5,
+        "sectors_covered": ["Sector1", "Sector2"]
+    }
+    Exclude IT consultancies, software vendors, or AI companies (competitors).
+    """
 
     messages = [
         {"role": "system", "content": f"{INSTRUCTIONS}\n\nOur company profile: {company_profile}"},
@@ -206,9 +255,12 @@ IMPORTANT: You must return a JSON object with this exact structure:
                             website_url=lead_data.get("website_url", ""),
                             description=lead_data.get("description", ""),
                             linkedin_info=lead_data.get("linkedin_info"),
-                            lead_reasoning=lead_data.get("lead_reasoning", ""),
+                            company_type=lead_data.get("company_type", ""),
                             sector=lead_data.get("sector", ""),
                             location=lead_data.get("location", ""),
+                            pain_points=lead_data.get("pain_points", []),
+                            proposed_solution=lead_data.get("proposed_solution", ""),
+                            lead_reasoning=lead_data.get("lead_reasoning", ""),
                             confidence_score=lead_data.get("confidence_score", 0.5)
                         )
                         leads.append(lead)
@@ -314,10 +366,19 @@ async def generate_email_proposal(company_lead: CompanyLead, company_profile: di
     prompt = f"""
                 Company Lead Info: {company_lead}
                 Our Company Profile: {company_profile}
+                
+                Key Lead Details:
+                - Company Type: {company_lead.company_type}
+                - Pain Points: {', '.join(company_lead.pain_points) if company_lead.pain_points else 'Not specified'}
+                - Proposed Solution: {company_lead.proposed_solution}
+                - Lead Reasoning: {company_lead.lead_reasoning}
+                
                 Draft three personalized email proposals for automation and AI integration services:
                 1. Formal version - professional and traditional
                 2. Informal version - casual and friendly  
                 3. Semi-formal version - balanced and modern
+                
+                Focus on addressing their specific pain points and how our proposed solution can help.
                 Make sure to take into consideration the special offer from our company profile.
                 Sign each email as a founder of the company.
              """
@@ -355,10 +416,18 @@ async def generate_linkedin_message(company_lead: CompanyLead, company_profile: 
     prompt = f"""
                 Company Lead Info: {company_lead}
                 Our Company Profile: {company_profile}
+                
+                Key Lead Details:
+                - Company Type: {company_lead.company_type}
+                - Pain Points: {', '.join(company_lead.pain_points) if company_lead.pain_points else 'Not specified'}
+                - Proposed Solution: {company_lead.proposed_solution}
+                
                 Draft three personalized LinkedIn connection request messages for automation and AI integration services:
                 1. Formal version - professional and traditional
                 2. Informal version - casual and friendly  
                 3. Semi-formal version - balanced and modern
+                
+                Focus on their specific pain points and how we can help address them.
                 Keep each message under 300 characters for LinkedIn's connection request limit.
                 Sign each message as a founder of the company.
              """
@@ -385,7 +454,7 @@ async def main():
     }
 
     with trace("Lead Search"):
-        recomended_sectors = await sector_identification_agent(company_profile)
+        recomended_sectors = await sector_identification_agent(company_profile, "medium", 1)
         pprint(recomended_sectors.model_dump())
         search_queries = await lead_discovery_agent(recomended_sectors, company_profile)
         pprint(search_queries.model_dump())
